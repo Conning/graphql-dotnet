@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using GraphQL.Utilities;
 
 namespace GraphQL
 {
@@ -88,7 +89,7 @@ namespace GraphQL
         {
             var attr = type.GetTypeInfo().GetCustomAttribute<GraphQLMetadataAttribute>();
 
-            if (attr != null)
+            if (!string.IsNullOrEmpty(attr?.Name))
             {
                 return attr.Name;
             }
@@ -129,7 +130,7 @@ namespace GraphQL
                 }
             }
 
-            graphType = GraphQL.GraphTypeRegistry.Get(type);
+            graphType = GraphTypeTypeRegistry.Get(type);
 
             if (type.IsArray)
             {
