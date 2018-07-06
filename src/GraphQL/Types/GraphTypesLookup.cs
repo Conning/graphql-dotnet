@@ -199,10 +199,15 @@ namespace GraphQL.Types
             if (type is IComplexGraphType)
             {
                 var complexType = type as IComplexGraphType;
-                complexType.Fields.Apply(field =>
+                try
                 {
-                    HandleField(type.GetType(), field, context);
-                });
+                    complexType.Fields.ToArray().Apply(field => { HandleField(type.GetType(), field, context); });
+                }
+                catch (Exception e)
+                {
+                    throw new ExecutionError(( "Complex type {0} threw exception while handling fields.  Error is {1}"
+                        .ToFormat(complexType.Name, e.Message)));
+                }
             }
 
             if (type is IObjectGraphType)
