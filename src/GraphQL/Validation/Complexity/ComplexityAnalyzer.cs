@@ -6,70 +6,82 @@ using GraphQL.Language.AST;
 
 namespace GraphQL.Validation.Complexity
 {
+    /// <summary>
+    /// The default complexity analyzer.
+    /// </summary>
     public class ComplexityAnalyzer : IComplexityAnalyzer
     {
-        private class FragmentComplexity
+        private sealed class FragmentComplexity
         {
             public int Depth { get; set; }
             public double Complexity { get; set; }
         }
 
-        private class AnalysisContext
+        private sealed class AnalysisContext
         {
             public ComplexityResult Result { get; } = new ComplexityResult();
             public int LoopCounter { get; set; }
+            public int MaxRecursionCount { get; set; }
             public Dictionary<string, FragmentComplexity> FragmentMap { get; } = new Dictionary<string, FragmentComplexity>();
-        }
-        
-        private readonly int _maxRecursionCount;
-        
-        /// <summary>
-        /// Creates a new instance of ComplexityAnalyzer
-        /// </summary>
-        /// <param name="maxRecursionCount">
-        /// Max. number of times to traverse tree nodes. GraphiQL queries take ~95 iterations, adjust as needed.
-        /// </param>
-        public ComplexityAnalyzer(int maxRecursionCount = 250)
-        {
-            _maxRecursionCount = maxRecursionCount;
+
+            public void AssertRecursion()
+            {
+                if (LoopCounter++ > MaxRecursionCount)
+                {
+                    throw new InvalidOperationException("Query is too complex to validate.");
+                }
+            }
         }
 
+        /// <inheritdoc/>
         public void Validate(Document document, ComplexityConfiguration complexityParameters)
         {
-            if (complexityParameters == null) return;
-            var complexityResult = Analyze(document, complexityParameters.FieldImpact ?? 2.0f);
-#if DEBUG
-            Debug.WriteLine($"Complexity: {complexityResult.Complexity}");
-            Debug.WriteLine($"Sum(Query depth across all subqueries) : {complexityResult.TotalQueryDepth}");
-            foreach (var node in complexityResult.ComplexityMap) Debug.WriteLine($"{node.Key} : {node.Value}");
-#endif
-            if (complexityParameters.MaxComplexity.HasValue &&
-                complexityResult.Complexity > complexityParameters.MaxComplexity.Value)
+            if (complexityParameters == null)
+                return;
+            var complexityResult = Analyze(document, complexityParameters.FieldImpact ?? 2.0f, complexityParameters.MaxRecursionCount);
+
+            Analyzed(document, complexityParameters, complexityResult);
+
+            if (complexityResult.Complexity > complexityParameters.MaxComplexity)
                 throw new InvalidOperationException(
                     $"Query is too complex to execute. The field with the highest complexity is: {complexityResult.ComplexityMap.OrderByDescending(pair => pair.Value).First().Key}");
 
-            if (complexityParameters.MaxDepth.HasValue &&
-                complexityResult.TotalQueryDepth > complexityParameters.MaxDepth)
+            if (complexityResult.TotalQueryDepth > complexityParameters.MaxDepth)
                 throw new InvalidOperationException(
                     $"Query is too nested to execute. Depth is {complexityResult.TotalQueryDepth} levels, maximum allowed on this endpoint is {complexityParameters.MaxDepth}.");
         }
 
         /// <summary>
-        /// Analyzes the complexity of a document.
-        /// </summary>  
-        internal ComplexityResult Analyze(Document doc, double avgImpact = 2.0d)
+        /// Executes after the complexity analysis has completed, before comparing results to the complexity configuration parameters.
+        /// This method is made to be able to access the calculated <see cref="ComplexityResult"/> and handle it, for example, for logging.
+        /// </summary>
+        protected virtual void Analyzed(Document document, ComplexityConfiguration complexityParameters, ComplexityResult complexityResult)
         {
-            if (avgImpact <= 1) throw new ArgumentOutOfRangeException(nameof(avgImpact));
-            
-            var context = new AnalysisContext();
+#if DEBUG
+            Debug.WriteLine($"Complexity: {complexityResult.Complexity}");
+            Debug.WriteLine($"Sum(Query depth across all subqueries) : {complexityResult.TotalQueryDepth}");
+            foreach (var node in complexityResult.ComplexityMap)
+                Debug.WriteLine($"{node.Key} : {node.Value}");
+#endif
+        }
 
-            doc.Children.OfType<FragmentDefinition>().Apply(node =>
+        /// <summary>
+        /// Analyzes the complexity of a document.
+        /// </summary>
+        internal ComplexityResult Analyze(Document doc, double avgImpact, int maxRecursionCount)
+        {
+            if (avgImpact <= 1)
+                throw new ArgumentOutOfRangeException(nameof(avgImpact));
+
+            var context = new AnalysisContext { MaxRecursionCount = maxRecursionCount };
+
+            foreach (var node in doc.Children.OfType<FragmentDefinition>())
             {
                 var fragResult = new FragmentComplexity();
-                FragmentIterator(context, node, fragResult, avgImpact, avgImpact, 1d);                
+                FragmentIterator(context, node, fragResult, avgImpact, avgImpact, 1d);
                 context.FragmentMap[node.Name] = fragResult;
-            });
-            
+            }
+
             TreeIterator(context, doc, avgImpact, avgImpact, 1d);
 
             return context.Result;
@@ -77,14 +89,11 @@ namespace GraphQL.Validation.Complexity
 
         private void FragmentIterator(AnalysisContext context, INode node, FragmentComplexity qDepthComplexity, double avgImpact, double currentSubSelectionImpact, double currentEndNodeImpact)
         {
-            if (context.LoopCounter++ > _maxRecursionCount)
-            {
-                throw new InvalidOperationException("Query is too complex to validate.");
-            }
+            context.AssertRecursion();
 
             if (node.Children != null &&
                 node.Children.Any(
-                    n => n is Field || (n is SelectionSet && ((SelectionSet)n).Children.Any()) || n is Operation))
+                    n => n is Field || (n is SelectionSet set && set.Children.Any()) || n is Operation))
             {
                 if (node is Field)
                 {
@@ -104,15 +113,13 @@ namespace GraphQL.Validation.Complexity
 
         private void TreeIterator(AnalysisContext context, INode node, double avgImpact, double currentSubSelectionImpact, double currentEndNodeImpact)
         {
-            if (context.LoopCounter++ > _maxRecursionCount)
-            {
-                throw new InvalidOperationException("Query is too complex to validate.");
-            }
+            context.AssertRecursion();
 
-            if (node is FragmentDefinition) return;
+            if (node is FragmentDefinition)
+                return;
 
             if (node.Children != null &&
-                node.Children.Any(n => n is Field || n is FragmentSpread || (n is SelectionSet && ((SelectionSet)n).Children.Any()) || n is Operation))
+                node.Children.Any(n => n is Field || n is FragmentSpread || (n is SelectionSet set && set.Children.Any()) || n is Operation))
             {
                 if (node is Field)
                 {
@@ -128,10 +135,10 @@ namespace GraphQL.Validation.Complexity
             }
             else if (node is Field)
                 RecordFieldComplexity(context, node, currentEndNodeImpact);
-            else if (node is FragmentSpread)
+            else if (node is FragmentSpread spread)
             {
-                var fragmentComplexity = context.FragmentMap[((FragmentSpread)node).Name];
-                RecordFieldComplexity(context, node, currentSubSelectionImpact / avgImpact * fragmentComplexity.Complexity);
+                var fragmentComplexity = context.FragmentMap[spread.Name];
+                RecordFieldComplexity(context, spread, currentSubSelectionImpact / avgImpact * fragmentComplexity.Complexity);
                 context.Result.TotalQueryDepth += fragmentComplexity.Depth;
             }
         }
@@ -139,18 +146,19 @@ namespace GraphQL.Validation.Complexity
         private static double? GetImpactFromArgs(INode node)
         {
             double? newImpact = null;
-            var args = node.Children.First(n => n is Arguments) as Arguments;
-            if (args == null) return null;
+            if (!(node.Children.FirstOrDefault(n => n is Arguments) is Arguments args))
+                return null;
 
-            if (args.ValueFor("id") != null) newImpact = 1;
+            if (args.ValueFor("id") != null)
+                newImpact = 1;
             else
             {
-                var firstValue = args.ValueFor("first") as IntValue;
-                if (firstValue != null) newImpact = firstValue.Value;
+                if (args.ValueFor("first") is IntValue firstValue)
+                    newImpact = firstValue.Value;
                 else
                 {
-                    var lastValue = args.ValueFor("last") as IntValue;
-                    if (lastValue != null) newImpact = lastValue.Value;
+                    if (args.ValueFor("last") is IntValue lastValue)
+                        newImpact = lastValue.Value;
                 }
             }
             return newImpact;

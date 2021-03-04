@@ -1,10 +1,9 @@
-﻿using GraphQL.Execution;
 using GraphQL.StarWars;
 using GraphQL.StarWars.Types;
 
 namespace GraphQL.Tests.StarWars
 {
-    public class StarWarsTestBase : QueryTestBase<StarWarsSchema, GraphQLDocumentBuilder>
+    public class StarWarsTestBase : QueryTestBase<StarWarsSchema>
     {
         public StarWarsTestBase()
         {
@@ -14,7 +13,7 @@ namespace GraphQL.Tests.StarWars
             Services.Register<DroidType>();
             Services.Register<CharacterInterface>();
 
-            Services.Singleton(new StarWarsSchema(new FuncDependencyResolver(type => Services.Get(type))));
+            Services.Singleton(new StarWarsSchema(new SimpleContainerAdapter(Services)));
         }
     }
 }

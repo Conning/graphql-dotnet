@@ -1,9 +1,6 @@
-﻿using GraphQL.Types;
-using Shouldly;
-using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
+using GraphQL.Types;
+using Shouldly;
 using Xunit;
 
 namespace GraphQL.Tests.Bugs
@@ -95,7 +92,7 @@ mutation {
                 resolve: ctx =>
                 {
                     var arg = ctx.GetArgument<NullInputClass>("input");
-                    var r= (arg.Id == null ? "id" : string.Empty) +
+                    var r = (arg.Id == null ? "id" : string.Empty) +
                           (arg.Foo == null ? "foo" : string.Empty) +
                           (arg.Bar == null ? "bar" : string.Empty);
                     return r;

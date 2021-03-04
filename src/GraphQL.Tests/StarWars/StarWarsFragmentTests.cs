@@ -1,3 +1,5 @@
+using GraphQL.Validation;
+using GraphQL.Validation.Errors;
 using Xunit;
 
 namespace GraphQL.Tests.StarWars
@@ -23,11 +25,11 @@ namespace GraphQL.Tests.StarWars
             ";
 
             var expected = @"{
-              'r2d2': {
-                name: 'R2-D2'
+              ""r2d2"": {
+                ""name"": ""R2-D2""
               },
-              'c3po': {
-                name: 'C-3PO'
+              ""c3po"": {
+                ""name"": ""C-3PO""
               }
             }";
 
@@ -48,9 +50,9 @@ namespace GraphQL.Tests.StarWars
             ";
 
             var expected = @"{
-              'r2d2': {
-                name: 'R2-D2'
-              },
+              ""r2d2"": {
+                ""name"": ""R2-D2""
+              }
             }";
 
             AssertQuerySuccess(query, expected);
@@ -70,9 +72,9 @@ namespace GraphQL.Tests.StarWars
             ";
 
             var expected = @"{
-              'r2d2': {
-                name: 'R2-D2'
-              },
+              ""r2d2"": {
+                ""name"": ""R2-D2""
+              }
             }";
 
             AssertQuerySuccess(query, expected);
@@ -90,7 +92,10 @@ namespace GraphQL.Tests.StarWars
                }
             ";
             var errors = new ExecutionErrors();
-            var error = new ExecutionError(@"Unknown fragment ""unknown_fragment"".");
+            var error = new ValidationError(query, KnownFragmentNamesError.NUMBER, @"Unknown fragment ""unknown_fragment"".")
+            {
+                Code = "KNOWN_FRAGMENT_NAMES"
+            };
             error.AddLocation(4, 25);
             errors.Add(error);
 

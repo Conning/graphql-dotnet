@@ -1,7 +1,5 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using GraphQL.Types;
 using Xunit;
 
@@ -10,7 +8,7 @@ namespace GraphQL.Tests.Bugs
     public class NullableInputListTests : QueryTestBase<TestSchema>
     {
         [Fact]
-        public async void Can_Accept_Null_List_From_Literal()
+        public void Can_Accept_Null_List_From_Literal()
         {
             var query = @"
                 query _ {
@@ -18,13 +16,13 @@ namespace GraphQL.Tests.Bugs
                 }";
             var expected = @"
                 {
-                    'example': ""null""
+                    ""example"": ""null""
                 }";
             AssertQuerySuccess(query, expected);
         }
 
         [Fact]
-        public async void Can_Accept_Null_List_From_Input()
+        public void Can_Accept_Null_List_From_Input()
         {
             var query = @"
                 query _($inputs:[TestInput]) {
@@ -32,7 +30,7 @@ namespace GraphQL.Tests.Bugs
                 }";
             var expected = @"
                 {
-                    'example': ""null""
+                    ""example"": ""null""
                 }";
             AssertQuerySuccess(query, expected, inputs: new Inputs(new Dictionary<string, object>
             {

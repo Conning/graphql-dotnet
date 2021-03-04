@@ -2,15 +2,19 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
-using GraphQL.Introspection;
 using GraphQL.Language.AST;
 using GraphQL.Types;
 
 namespace GraphQL.Execution
 {
+    /// <summary>
+    /// Provides helper methods for document execution.
+    /// </summary>
     public static class ExecutionHelper
     {
+        /// <summary>
+        /// Returns the root graph type for the execution -- for a specified schema and operation type.
+        /// </summary>
         public static IObjectGraphType GetOperationRootType(Document document, ISchema schema, Operation operation)
         {
             IObjectGraphType type;
@@ -27,7 +31,7 @@ namespace GraphQL.Execution
                     type = schema.Mutation;
                     if (type == null)
                     {
-                        error = new ExecutionError("Schema is not configured for mutations");
+                        error = new InvalidOperationError("Schema is not configured for mutations");
                         error.AddLocation(operation, document);
                         throw error;
                     }
@@ -37,99 +41,122 @@ namespace GraphQL.Execution
                     type = schema.Subscription;
                     if (type == null)
                     {
-                        error = new ExecutionError("Schema is not configured for subscriptions");
+                        error = new InvalidOperationError("Schema is not configured for subscriptions");
                         error.AddLocation(operation, document);
                         throw error;
                     }
                     break;
 
                 default:
-                    error = new ExecutionError("Can only execute queries, mutations and subscriptions.");
-                    error.AddLocation(operation, document);
-                    throw error;
+                    throw new ArgumentOutOfRangeException(nameof(operation), "Can only execute queries, mutations and subscriptions.");
             }
 
             return type;
         }
 
-        public static FieldType GetFieldDefinition(Document document, ISchema schema, IObjectGraphType parentType, Field field)
+        /// <summary>
+        /// Returns a <see cref="FieldType"/> for the specified AST <see cref="Field"/> within a specified parent
+        /// output graph type within a given schema. For meta-fields, returns the proper meta-field field type.
+        /// </summary>
+        public static FieldType GetFieldDefinition(ISchema schema, IObjectGraphType parentType, Field field)
         {
-            if (field.Name == SchemaIntrospection.SchemaMeta.Name && schema.Query == parentType)
+            if (field.Name == schema.SchemaMetaFieldType.Name && schema.Query == parentType)
             {
-                return SchemaIntrospection.SchemaMeta;
+                return schema.SchemaMetaFieldType;
             }
-            if (field.Name == SchemaIntrospection.TypeMeta.Name && schema.Query == parentType)
+            if (field.Name == schema.TypeMetaFieldType.Name && schema.Query == parentType)
             {
-                return SchemaIntrospection.TypeMeta;
+                return schema.TypeMetaFieldType;
             }
-            if (field.Name == SchemaIntrospection.TypeNameMeta.Name)
+            if (field.Name == schema.TypeNameMetaFieldType.Name)
             {
-                return SchemaIntrospection.TypeNameMeta;
+                return schema.TypeNameMetaFieldType;
             }
 
             if (parentType == null)
             {
-                var error = new ExecutionError($"Schema is not configured correctly to fetch {field.Name}.  Are you missing a root type?");
-                error.AddLocation(field, document);
-                throw error;
+                throw new ArgumentNullException(nameof(parentType), $"Schema is not configured correctly to fetch field '{field.Name}'. Are you missing a root type?");
             }
 
-            return parentType.Fields.FirstOrDefault(f => f.Name == field.Name);
+            return parentType.GetField(field.Name);
         }
 
+        /// <summary>
+        /// Returns all of the variable values defined for the document from the attached <see cref="Inputs"/> object.
+        /// </summary>
         public static Variables GetVariableValues(Document document, ISchema schema, VariableDefinitions variableDefinitions, Inputs inputs)
         {
             var variables = new Variables();
-            variableDefinitions?.Apply(v =>
+
+            if (variableDefinitions != null)
             {
-                var variable = new Variable
+                foreach (var v in variableDefinitions)
                 {
-                    Name = v.Name
-                };
+                    var variable = new Variable
+                    {
+                        Name = v.Name
+                    };
 
-                object variableValue = null;
-                inputs?.TryGetValue(v.Name, out variableValue);
-                variable.Value = GetVariableValue(document, schema, v, variableValue);
+                    if (inputs.TryGetValue(v.Name, out var variableValue))
+                    {
+                        variable.Value = GetVariableValue(document, schema, v, variableValue);
+                    }
+                    else
+                    {
+                        var value = GetVariableValue(document, schema, v, v.DefaultValue?.Value);
+                        if (value != null)
+                            variable.Value = value;
+                    }
 
-                variables.Add(variable);
-            });
+                    variables.Add(variable);
+                }
+            }
+
             return variables;
         }
 
+        /// <summary>
+        /// Return the specified variable's value for the document from the attached <see cref="Inputs"/> object.
+        /// Since v3.3, returns null for variables set to null rather than the variable's default value.
+        /// </summary>
         public static object GetVariableValue(Document document, ISchema schema, VariableDefinition variable, object input)
         {
             var type = variable.Type.GraphTypeFromType(schema);
 
             try
             {
-                AssertValidValue(schema, type, input, variable.Name);
+                AssertValidVariableValue(schema, type, input, variable.Name, variable.DefaultValue != null);
             }
-            catch (InvalidValueException error)
+            catch (InvalidVariableError error)
             {
                 error.AddLocation(variable, document);
                 throw;
             }
 
-            if (input == null && variable.DefaultValue != null)
+            if (input == null)
             {
-                return variable.DefaultValue.Value;
+                return null;
             }
 
             return CoerceValue(schema, type, input.AstFromValue(schema, type));
         }
 
-        public static void AssertValidValue(ISchema schema, IGraphType type, object input, string fieldName)
+        /// <summary>
+        /// Ensures that the specified variable value is valid for the variable's graph type.
+        /// </summary>
+        public static void AssertValidVariableValue(ISchema schema, IGraphType type, object input, string variableName, bool hasDefaultValue)
         {
-            if (type is NonNullGraphType)
+            // see also GraphQLExtensions.IsValidLiteralValue
+            if (type is NonNullGraphType graphType)
             {
-                var nonNullType = ((NonNullGraphType)type).ResolvedType;
+                var nonNullType = graphType.ResolvedType;
 
-                if (input == null)
+                if (input == null && !hasDefaultValue)
                 {
-                    throw new InvalidValueException(fieldName, "Received a null input for a non-null field.");
+                    throw new InvalidVariableError(variableName, "Received a null input for a non-null variable.");
                 }
 
-                AssertValidValue(schema, nonNullType, input, fieldName);
+                AssertValidVariableValue(schema, nonNullType, input, variableName, hasDefaultValue);
                 return;
             }
 
@@ -140,8 +167,40 @@ namespace GraphQL.Execution
 
             if (type is ScalarGraphType scalar)
             {
-                if (ValueFromScalar(scalar, input) == null)
-                    throw new InvalidValueException(fieldName, "Invalid Scalar value for input field.");
+                // verify value can be converted successfully
+
+                if (input is IValue value)
+                {
+                    bool conversionFailed;
+
+                    try
+                    {
+                        conversionFailed = scalar.ParseLiteral(value) == null;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidVariableError(variableName, $"Unable to convert '{value.Value}' to '{type.Name}'", ex);
+                    }
+
+                    if (conversionFailed)
+                        throw new InvalidVariableError(variableName, $"Unable to convert '{value.Value}' to '{type.Name}'");
+                }
+                else
+                {
+                    bool conversionFailed;
+
+                    try
+                    {
+                        conversionFailed = scalar.ParseValue(input) == null;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidVariableError(variableName, $"Unable to convert '{input}' to '{type.Name}'", ex);
+                    }
+
+                    if (conversionFailed)
+                        throw new InvalidVariableError(variableName, $"Unable to convert '{input}' to '{type.Name}'");
+                }
 
                 return;
             }
@@ -154,205 +213,257 @@ namespace GraphQL.Execution
                 {
                     var index = -1;
                     foreach (var item in list)
-                        AssertValidValue(schema, listItemType, item, $"{fieldName}[{++index}]");
+                        AssertValidVariableValue(schema, listItemType, item, $"{variableName}[{++index}]", hasDefaultValue);
                 }
                 else
                 {
-                    AssertValidValue(schema, listItemType, input, fieldName);
+                    AssertValidVariableValue(schema, listItemType, input, variableName, hasDefaultValue);
                 }
                 return;
             }
 
             if (type is IObjectGraphType || type is IInputObjectGraphType)
             {
-                var dict = input as Dictionary<string, object>;
                 var complexType = (IComplexGraphType)type;
 
-                if (dict == null)
+                if (!(input is Dictionary<string, object> dict))
                 {
-                    throw new InvalidValueException(fieldName,
+                    throw new InvalidVariableError(variableName,
                         $"Unable to parse input as a '{type.Name}' type. Did you provide a List or Scalar value accidentally?");
                 }
 
                 // ensure every provided field is defined
-                var unknownFields = type is IInputObjectGraphType
-                    ? dict.Keys.Where(key => complexType.Fields.All(field => field.Name != key)).ToArray()
-                    : null;
+                IList<string> unknownFields = null;
 
-                if (unknownFields?.Any() == true)
+                if (type is IInputObjectGraphType)
                 {
-                    throw new InvalidValueException(fieldName,
+                    unknownFields = dict.Keys
+                        .Except(complexType.Fields.Select(f => f.Name))
+                        .ToList();
+                }
+
+                if (unknownFields?.Count > 0)
+                {
+                    throw new InvalidVariableError(variableName,
                         $"Unrecognized input fields {string.Join(", ", unknownFields.Select(k => $"'{k}'"))} for type '{type.Name}'.");
                 }
 
                 foreach (var field in complexType.Fields)
                 {
                     dict.TryGetValue(field.Name, out object fieldValue);
-                    AssertValidValue(schema, field.ResolvedType, fieldValue, $"{fieldName}.{field.Name}");
+                    AssertValidVariableValue(schema, field.ResolvedType, fieldValue, $"{variableName}.{field.Name}", hasDefaultValue);
                 }
                 return;
             }
 
-            throw new InvalidValueException(fieldName ?? "input", "Invalid input");
+            throw new InvalidVariableError(variableName ?? "input", "Invalid input");
         }
 
-        private static object ValueFromScalar(ScalarGraphType scalar, object input)
-        {
-            if (input is IValue)
-            {
-                return scalar.ParseLiteral((IValue)input);
-            }
-
-            return scalar.ParseValue(input);
-        }
-
+        /// <summary>
+        /// Returns a dictionary of arguments and their values for a field or directive. Values will be retrieved from literals
+        /// or variables as specified by the document.
+        /// </summary>
         public static Dictionary<string, object> GetArgumentValues(ISchema schema, QueryArguments definitionArguments, Arguments astArguments, Variables variables)
         {
-            if (definitionArguments == null || !definitionArguments.Any())
+            if (definitionArguments == null || definitionArguments.Count == 0)
             {
                 return null;
             }
 
-            return definitionArguments.Aggregate(new Dictionary<string, object>(), (acc, arg) =>
+            var values = new Dictionary<string, object>(definitionArguments.Count);
+
+            foreach (var arg in definitionArguments.ArgumentsList)
             {
                 var value = astArguments?.ValueFor(arg.Name);
                 var type = arg.ResolvedType;
 
-                var coercedValue = CoerceValue(schema, type, value, variables);
-                coercedValue = coercedValue ?? arg.DefaultValue;
-                if (coercedValue != null)
-                {
-                    acc[arg.Name] = coercedValue;
-                }
-
-                return acc;
-            });
-        }
-
-        public static object CoerceValue(ISchema schema, IGraphType type, IValue input, Variables variables = null)
-        {
-            if (type is NonNullGraphType)
-            {
-                var nonNull = type as NonNullGraphType;
-                return CoerceValue(schema, nonNull.ResolvedType, input, variables);
+                values[arg.Name] = CoerceValue(schema, type, value, variables, arg.DefaultValue);
             }
 
-            if (input == null || input is NullValue)
+            return values;
+        }
+
+        /// <summary>
+        /// Coerces a variable value to a compatible .NET type for the variable's graph type.
+        /// </summary>
+        public static object CoerceValue(ISchema schema, IGraphType type, IValue input, Variables variables = null, object fieldDefault = null)
+        {
+            if (type is NonNullGraphType nonNull)
+            {
+                // validation rules and/or AssertValidVariableValue have verified that this is not null
+                return CoerceValue(schema, nonNull.ResolvedType, input, variables, fieldDefault);
+            }
+
+            if (input == null)
+            {
+                return fieldDefault;
+            }
+
+            if (input is NullValue)
             {
                 return null;
             }
 
             if (input is VariableReference variable)
             {
-                return variables?.ValueFor(variable.Name);
+                if (variables == null)
+                    return fieldDefault;
+
+                return variables.ValueFor(variable.Name, fieldDefault);
             }
 
             if (type is ListGraphType listType)
             {
                 var listItemType = listType.ResolvedType;
-                var list = input as ListValue;
 
-                return list != null
-                    ? list.Values.Map(item => CoerceValue(schema, listItemType, item, variables)).ToArray()
-                    : new[] { CoerceValue(schema, listItemType, input, variables) };
+                if (input is ListValue list)
+                {
+                    return list.Values
+                        .Select(item => CoerceValue(schema, listItemType, item, variables))
+                        .ToList();
+                }
+                else
+                {
+                    return new[] { CoerceValue(schema, listItemType, input, variables) };
+                }
             }
 
             if (type is IObjectGraphType || type is IInputObjectGraphType)
             {
-                var complexType = type as IComplexGraphType;
-                var obj = new Dictionary<string, object>();
-
-                var objectValue = input as ObjectValue;
-                if (objectValue == null)
+                if (!(input is ObjectValue objectValue))
                 {
                     return null;
                 }
 
-                complexType.Fields.Apply(field =>
+                var complexType = (IComplexGraphType)type; // both IObjectGraphType and IInputObjectGraphType inherit from IComplexGraphType
+                var obj = new Dictionary<string, object>();
+
+                foreach (var field in complexType.Fields)
                 {
+                    // https://spec.graphql.org/June2018/#sec-Input-Objects
                     var objectField = objectValue.Field(field.Name);
                     if (objectField != null)
                     {
-                        var fieldValue = CoerceValue(schema, field.ResolvedType, objectField.Value, variables);
-                        fieldValue = fieldValue ?? field.DefaultValue;
+                        // Rules covered:
 
-                        obj[field.Name] = fieldValue;
+                        // If no default value is provided and the input object field’s type is non‐null, an error should be
+                        // thrown.
+
+                        // If a literal value is provided for an input object field, an entry in the coerced unordered map is
+                        // given the result of coercing that value according to the input coercion rules for the type of that field.
+
+                        // If a variable is provided for an input object field, the runtime value of that variable must be used.
+                        // If the runtime value is null and the field type is non‐null, a field error must be thrown.
+                        // If no runtime value is provided, the variable definition’s default value should be used.
+                        // If the variable definition does not provide a default value, the input object field definition’s
+                        // default value should be used.
+
+                        // so: do not pass the field's default value to this method, since the field was specified
+                        obj[field.Name] = CoerceValue(schema, field.ResolvedType, objectField.Value, variables);
                     }
-                });
+                    else if (field.DefaultValue != null)
+                    {
+                        // If no value is provided for a defined input object field and that field definition provides a default value,
+                        // the default value should be used. 
+                        obj[field.Name] = field.DefaultValue;
+                    }
+                    // Covered by validation rules and/or AssertValidVariableValue:
+                    // Otherwise, if the field is not required, then no entry is added to the coerced unordered map.
+                }
 
                 return obj;
             }
 
-            if (type is ScalarGraphType)
+            if (type is ScalarGraphType scalarType)
             {
-                var scalarType = type as ScalarGraphType;
-                return scalarType.ParseLiteral(input);
+                return scalarType.ParseLiteral(input) ?? throw new ArgumentException($"Unable to convert '{input}' to '{type.Name}'");
             }
 
             return null;
         }
 
-        public static Dictionary<string, Field> CollectFields(
+        private static Fields CollectFields(
             ExecutionContext context,
             IGraphType specificType,
             SelectionSet selectionSet,
-            Dictionary<string, Field> fields,
+            Fields fields,
             List<string> visitedFragmentNames)
         {
-            if (fields == null)
+            if (selectionSet != null)
             {
-                fields = new Dictionary<string, Field>();
+                foreach (var selection in selectionSet.SelectionsList)
+                {
+                    if (selection is Field field)
+                    {
+                        if (!ShouldIncludeNode(context, field.Directives))
+                        {
+                            continue;
+                        }
+
+                        fields.Add(field);
+                    }
+                    else if (selection is FragmentSpread spread)
+                    {
+                        if (visitedFragmentNames.Contains(spread.Name)
+                            || !ShouldIncludeNode(context, spread.Directives))
+                        {
+                            continue;
+                        }
+
+                        visitedFragmentNames.Add(spread.Name);
+
+                        var fragment = context.Fragments.FindDefinition(spread.Name);
+                        if (fragment == null
+                            || !ShouldIncludeNode(context, fragment.Directives)
+                            || !DoesFragmentConditionMatch(context, fragment.Type.Name, specificType))
+                        {
+                            continue;
+                        }
+
+                        CollectFields(context, specificType, fragment.SelectionSet, fields, visitedFragmentNames);
+                    }
+                    else if (selection is InlineFragment inline)
+                    {
+                        var name = inline.Type != null ? inline.Type.Name : specificType.Name;
+
+                        if (!ShouldIncludeNode(context, inline.Directives)
+                          || !DoesFragmentConditionMatch(context, name, specificType))
+                        {
+                            continue;
+                        }
+
+                        CollectFields(context, specificType, inline.SelectionSet, fields, visitedFragmentNames);
+                    }
+                }
             }
-
-            selectionSet?.Selections.Apply(selection =>
-            {
-                if (selection is Field field)
-                {
-                    if (!ShouldIncludeNode(context, field.Directives))
-                    {
-                        return;
-                    }
-
-                    var name = field.Alias ?? field.Name;
-                    fields[name] = field;
-                }
-                else if (selection is FragmentSpread spread)
-                {
-                    if (visitedFragmentNames.Contains(spread.Name)
-                        || !ShouldIncludeNode(context, spread.Directives))
-                    {
-                        return;
-                    }
-
-                    visitedFragmentNames.Add(spread.Name);
-
-                    var fragment = context.Fragments.FindDefinition(spread.Name);
-                    if (fragment == null
-                        || !ShouldIncludeNode(context, fragment.Directives)
-                        || !DoesFragmentConditionMatch(context, fragment.Type.Name, specificType))
-                    {
-                        return;
-                    }
-
-                    CollectFields(context, specificType, fragment.SelectionSet, fields, visitedFragmentNames);
-                }
-                else if (selection is InlineFragment inline)
-                {
-                    var name = inline.Type != null ? inline.Type.Name : specificType.Name;
-
-                    if (!ShouldIncludeNode(context, inline.Directives)
-                      || !DoesFragmentConditionMatch(context, name, specificType))
-                    {
-                        return;
-                    }
-
-                    CollectFields(context, specificType, inline.SelectionSet, fields, visitedFragmentNames);
-                }
-            });
 
             return fields;
         }
 
+        /// <summary>
+        /// Before execution, the selection set is converted to a grouped field set by calling CollectFields().
+        /// Each entry in the grouped field set is a list of fields that share a response key (the alias if defined,
+        /// otherwise the field name). This ensures all fields with the same response key included via referenced
+        /// fragments are executed at the same time.
+        /// <br/><br/>
+        /// See http://spec.graphql.org/June2018/#sec-Field-Collection and http://spec.graphql.org/June2018/#CollectFields()
+        /// </summary>
+        public static Dictionary<string, Field> CollectFields(
+            ExecutionContext context,
+            IGraphType specificType,
+            SelectionSet selectionSet)
+        {
+            return CollectFields(context, specificType, selectionSet, Fields.Empty(), new List<string>());
+        }
+
+        /// <summary>
+        /// Examines @skip and @include directives for a node and returns a value indicating if the node should be included or not.
+        /// <br/><br/>
+        /// Note: Neither @skip nor @include has precedence over the other. In the case that both the @skip and @include
+        /// directives are provided on the same field or fragment, it must be queried only if the @skip condition
+        /// is false and the @include condition is true. Stated conversely, the field or fragment must not be queried
+        /// if either the @skip condition is true or the @include condition is false.
+        /// </summary>
         public static bool ShouldIncludeNode(ExecutionContext context, Directives directives)
         {
             if (directives != null)
@@ -366,9 +477,8 @@ namespace GraphQL.Execution
                         directive.Arguments,
                         context.Variables);
 
-                    values.TryGetValue("if", out object ifObj);
-
-                    return !(bool.TryParse(ifObj?.ToString() ?? string.Empty, out bool ifVal) && ifVal);
+                    if (values.TryGetValue("if", out object ifObj) && bool.TryParse(ifObj?.ToString() ?? string.Empty, out bool ifVal) && ifVal)
+                        return false;
                 }
 
                 directive = directives.Find(DirectiveGraphType.Include.Name);
@@ -380,14 +490,19 @@ namespace GraphQL.Execution
                         directive.Arguments,
                         context.Variables);
 
-                    values.TryGetValue("if", out object ifObj);
-                    return bool.TryParse(ifObj?.ToString() ?? string.Empty, out bool ifVal) && ifVal;
+                    return values.TryGetValue("if", out object ifObj) && bool.TryParse(ifObj?.ToString() ?? string.Empty, out bool ifVal) && ifVal;
                 }
             }
 
             return true;
         }
 
+        /// <summary>
+        /// This method calculates the criterion for matching fragment definition (spread or inline) to a given graph type.
+        /// This criterion determines the need to fill the resulting selection set with fields from such a fragment.
+        /// <br/><br/>
+        /// See http://spec.graphql.org/June2018/#DoesFragmentTypeApply()
+        /// </summary>
         public static bool DoesFragmentConditionMatch(ExecutionContext context, string fragmentName, IGraphType type)
         {
             if (string.IsNullOrWhiteSpace(fragmentName))
@@ -416,55 +531,16 @@ namespace GraphQL.Execution
         }
 
         /// <summary>
-        /// Unwrap nested Tasks to get the result
+        /// Returns a list of subfields (child nodes) for a result node based on the selection set from the document.
         /// </summary>
-        /// <param name="result"></param>
-        /// <returns></returns>
-        public static async Task<object> UnwrapResultAsync(object result)
-        {
-            while (result is Task task)
-            {
-                await task.ConfigureAwait(false);
-
-                // Most performant if available
-                if (task is Task<object> t)
-                {
-                    result = t.Result;
-                }
-                else
-                {
-                    result = ((dynamic)task).Result;
-                }
-            }
-
-            return result;
-        }
-
         public static IDictionary<string, Field> SubFieldsFor(ExecutionContext context, IGraphType fieldType, Field field)
         {
             var selections = field?.SelectionSet?.Selections;
-            if (selections == null || selections.Any() == false)
+            if (selections == null || selections.Count == 0)
             {
                 return null;
             }
-
-            var subFields = new Dictionary<string, Field>();
-            var visitedFragments = new List<string>();
-            return CollectFields(context, fieldType, field.SelectionSet, subFields, visitedFragments);
-        }
-
-        public static string[] AppendPath(string[] path, string pathSegment)
-        {
-            if (path == null)
-                throw new ArgumentNullException(nameof(path));
-
-            var newPath = new string[path.Length + 1];
-
-            path.CopyTo(newPath, 0);
-
-            newPath[path.Length] = pathSegment;
-
-            return newPath;
+            return CollectFields(context, fieldType, field.SelectionSet);
         }
     }
 }

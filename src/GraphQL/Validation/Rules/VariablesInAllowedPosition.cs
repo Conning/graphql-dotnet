@@ -1,22 +1,25 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using GraphQL.Language.AST;
 using GraphQL.Types;
-using GraphQLParser;
+using GraphQL.Validation.Errors;
 
 namespace GraphQL.Validation.Rules
 {
     /// <summary>
-    /// Variables passed to field arguments conform to type
+    /// Variables passed to field arguments conform to type.
     /// </summary>
     public class VariablesInAllowedPosition : IValidationRule
     {
-        public Func<string, string, string, string> BadVarPosMessage =>
-            (varName, varType, expectedType) =>
-                $"Variable \"${varName}\" of type \"{varType}\" used in position " +
-                $"expecting type \"{expectedType}\".";
+        /// <summary>
+        /// Returns a static instance of this validation rule.
+        /// </summary>
+        public static readonly VariablesInAllowedPosition Instance = new VariablesInAllowedPosition();
 
-        public INodeVisitor Validate(ValidationContext context)
+        /// <inheritdoc/>
+        /// <exception cref="VariablesInAllowedPositionError"/>
+        public Task<INodeVisitor> ValidateAsync(ValidationContext context)
         {
             var varDefMap = new Dictionary<string, VariableDefinition>();
 
@@ -30,12 +33,10 @@ namespace GraphQL.Validation.Rules
                     enter: op => varDefMap = new Dictionary<string, VariableDefinition>(),
                     leave: op =>
                     {
-                        var usages = context.GetRecursiveVariables(op);
-                        usages.Apply(usage =>
+                        foreach (var usage in context.GetRecursiveVariables(op))
                         {
                             var varName = usage.Node.Name;
-                            VariableDefinition varDef;
-                            if (!varDefMap.TryGetValue(varName, out varDef))
+                            if (!varDefMap.TryGetValue(varName, out var varDef))
                             {
                                 return;
                             }
@@ -46,29 +47,17 @@ namespace GraphQL.Validation.Rules
                                 if (varType != null &&
                                     !effectiveType(varType, varDef).IsSubtypeOf(usage.Type, context.Schema))
                                 {
-                                    var error = new ValidationError(
-                                        context.OriginalQuery,
-                                        "5.7.6",
-                                        BadVarPosMessage(varName, context.Print(varType), context.Print(usage.Type)));
-
-                                    var source = new Source(context.OriginalQuery);
-                                    var varDefPos = new Location(source, varDef.SourceLocation.Start);
-                                    var usagePos = new Location(source, usage.Node.SourceLocation.Start);
-
-                                    error.AddLocation(varDefPos.Line, varDefPos.Column);
-                                    error.AddLocation(usagePos.Line, usagePos.Column);
-
-                                    context.ReportError(error);
+                                    context.ReportError(new VariablesInAllowedPositionError(context, varDef, varType, usage));
                                 }
                             }
-                        });
+                        }
                     }
                 );
-            });
+            }).ToTask();
         }
 
         /// <summary>
-        /// if a variable defintion has a default value, it is effectively non-null.
+        /// if a variable definition has a default value, it is effectively non-null.
         /// </summary>
         private GraphType effectiveType(IGraphType varType, VariableDefinition varDef)
         {

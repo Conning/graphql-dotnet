@@ -1,4 +1,5 @@
-﻿using GraphQL.Validation.Rules;
+using GraphQL.Validation.Errors;
+using GraphQL.Validation.Rules;
 using Xunit;
 
 namespace GraphQL.Tests.Validation
@@ -97,12 +98,12 @@ namespace GraphQL.Tests.Validation
             ShouldFailRule(_ =>
             {
                 _.Query = query;
-                _.Error(Rule.DuplicateOperationNameMessage("Foo"), 6, 17);
+                _.Error(UniqueOperationNamesError.DuplicateOperationNameMessage("Foo"), 6, 17);
             });
         }
 
         [Fact]
-        public void multiple_operations_of_same_name_of_diferent_types_mutation()
+        public void multiple_operations_of_same_name_of_different_types_mutation()
         {
             var query = @"
                 query Foo {
@@ -117,12 +118,12 @@ namespace GraphQL.Tests.Validation
             ShouldFailRule(_ =>
             {
                 _.Query = query;
-                _.Error(Rule.DuplicateOperationNameMessage("Foo"), 6, 17);
+                _.Error(UniqueOperationNamesError.DuplicateOperationNameMessage("Foo"), 6, 17);
             });
         }
 
         [Fact]
-        public void multiple_operations_of_same_name_of_diferent_types_subscription()
+        public void multiple_operations_of_same_name_of_different_types_subscription()
         {
             var query = @"
                 query Foo {
@@ -137,7 +138,7 @@ namespace GraphQL.Tests.Validation
             ShouldFailRule(_ =>
             {
                 _.Query = query;
-                _.Error(Rule.DuplicateOperationNameMessage("Foo"), 6, 17);
+                _.Error(UniqueOperationNamesError.DuplicateOperationNameMessage("Foo"), 6, 17);
             });
         }
     }

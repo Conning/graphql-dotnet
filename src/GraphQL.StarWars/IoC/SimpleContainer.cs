@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 
 namespace GraphQL.StarWars.IoC
 {
@@ -9,64 +8,60 @@ namespace GraphQL.StarWars.IoC
     {
         object Get(Type serviceType);
         T Get<T>();
-        void Register<TService>();
-        void Register<TService>(Func<TService> instanceCreator);
-        void Register<TService, TImpl>() where TImpl : TService;
-        void Singleton<TService>(TService instance);
-        void Singleton<TService>(Func<TService> instanceCreator);
+        void Register<TService>() where TService : class;
+        void Register<TService>(Func<TService> instanceCreator) where TService : class;
+        void Register<TService, TImpl>() where TService : class where TImpl : class, TService;
+        void Singleton<TService>(TService instance) where TService : class;
+        void Singleton<TService>(Func<TService> instanceCreator) where TService : class;
     }
 
     public class SimpleContainer : ISimpleContainer
     {
         private readonly Dictionary<Type, Func<object>> _registrations = new Dictionary<Type, Func<object>>();
 
-        public void Register<TService>()
+        public void Register<TService>() where TService : class
         {
             Register<TService, TService>();
         }
 
-        public void Register<TService, TImpl>() where TImpl : TService
+        public void Register<TService, TImpl>() where TService : class where TImpl : class, TService
         {
             _registrations.Add(typeof(TService),
                 () =>
                 {
-                    var implType = typeof (TImpl);
-                    return typeof (TService) == implType
+                    var implType = typeof(TImpl);
+                    return typeof(TService) == implType
                         ? CreateInstance(implType)
                         : Get(implType);
                 });
         }
 
-        public void Register<TService>(Func<TService> instanceCreator)
+        public void Register<TService>(Func<TService> instanceCreator) where TService : class
         {
             _registrations.Add(typeof(TService), () => instanceCreator());
         }
 
-        public void Singleton<TService>(TService instance)
+        public void Singleton<TService>(TService instance) where TService : class
         {
             _registrations.Add(typeof(TService), () => instance);
         }
 
-        public void Singleton<TService>(Func<TService> instanceCreator)
+        public void Singleton<TService>(Func<TService> instanceCreator) where TService : class
         {
             var lazy = new Lazy<TService>(instanceCreator);
             Register(() => lazy.Value);
         }
 
-        public T Get<T>()
-        {
-            return (T)Get(typeof (T));
-        }
+        public T Get<T>() => (T)Get(typeof(T));
 
         public object Get(Type serviceType)
         {
-            Func<object> creator;
-            if (_registrations.TryGetValue(serviceType, out creator))
+            if (_registrations.TryGetValue(serviceType, out var creator))
             {
                 return creator();
             }
 
-            if (!serviceType.GetTypeInfo().IsAbstract)
+            if (!serviceType.IsAbstract)
             {
                 return CreateInstance(serviceType);
             }

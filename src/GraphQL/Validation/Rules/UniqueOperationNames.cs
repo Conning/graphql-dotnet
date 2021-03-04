@@ -1,22 +1,27 @@
-﻿using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using GraphQL.Language.AST;
+using GraphQL.Validation.Errors;
 
 namespace GraphQL.Validation.Rules
 {
     /// <summary>
-    /// Unique operation names
+    /// Unique operation names:
     ///
     /// A GraphQL document is only valid if all defined operations have unique names.
     /// </summary>
     public class UniqueOperationNames : IValidationRule
     {
-        public Func<string, string> DuplicateOperationNameMessage => opName =>
-            $"There can only be one operation named {opName}.";
+        /// <summary>
+        /// Returns a static instance of this validation rule.
+        /// </summary>
+        public static readonly UniqueOperationNames Instance = new UniqueOperationNames();
 
-        public INodeVisitor Validate(ValidationContext context)
+        /// <inheritdoc/>
+        /// <exception cref="UniqueOperationNamesError"/>
+        public Task<INodeVisitor> ValidateAsync(ValidationContext context)
         {
-            var frequency = new Dictionary<string, string>();
+            var frequency = new HashSet<string>();
 
             return new EnterLeaveListener(_ =>
             {
@@ -32,21 +37,12 @@ namespace GraphQL.Validation.Rules
                             return;
                         }
 
-                        if (frequency.ContainsKey(op.Name))
+                        if (!frequency.Add(op.Name))
                         {
-                            var error = new ValidationError(
-                                context.OriginalQuery,
-                                "5.1.1.1",
-                                DuplicateOperationNameMessage(op.Name),
-                                op);
-                            context.ReportError(error);
-                        }
-                        else
-                        {
-                            frequency[op.Name] = op.Name;
+                            context.ReportError(new UniqueOperationNamesError(context, op));
                         }
                     });
-            });
+            }).ToTask();
         }
     }
 }

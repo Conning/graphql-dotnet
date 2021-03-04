@@ -1,23 +1,26 @@
-﻿using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using GraphQL.Language.AST;
+using GraphQL.Validation.Errors;
 
 namespace GraphQL.Validation.Rules
 {
     /// <summary>
-    /// No undefined variables
+    /// No undefined variables:
     ///
     /// A GraphQL operation is only valid if all variables encountered, both directly
     /// and via fragment spreads, are defined by that operation.
     /// </summary>
     public class NoUndefinedVariables : IValidationRule
     {
-        public Func<string, string, string> UndefinedVarMessage = (varName, opName) =>
-            !string.IsNullOrWhiteSpace(opName)
-                ? $"Variable \"${varName}\" is not defined by operation \"{opName}\"."
-                : $"Variable \"${varName}\" is not defined.";
+        /// <summary>
+        /// Returns a static instance of this validation rule.
+        /// </summary>
+        public static readonly NoUndefinedVariables Instance = new NoUndefinedVariables();
 
-        public INodeVisitor Validate(ValidationContext context)
+        /// <inheritdoc/>
+        /// <exception cref="NoUndefinedVariablesError"/>
+        public Task<INodeVisitor> ValidateAsync(ValidationContext context)
         {
             var variableNameDefined = new Dictionary<string, bool>();
 
@@ -29,24 +32,16 @@ namespace GraphQL.Validation.Rules
                     enter: op => variableNameDefined = new Dictionary<string, bool>(),
                     leave: op =>
                     {
-                        var usages = context.GetRecursiveVariables(op);
-                        usages.Apply(usage =>
+                        foreach (var usage in context.GetRecursiveVariables(op))
                         {
                             var varName = usage.Node.Name;
-                            bool found;
-                            if (!variableNameDefined.TryGetValue(varName, out found))
+                            if (!variableNameDefined.TryGetValue(varName, out bool found))
                             {
-                                var error = new ValidationError(
-                                    context.OriginalQuery,
-                                    "5.7.4",
-                                    UndefinedVarMessage(varName, op.Name),
-                                    usage.Node,
-                                    op);
-                                context.ReportError(error);
+                                context.ReportError(new NoUndefinedVariablesError(context, op, usage.Node));
                             }
-                        });
+                        }
                     });
-            });
+            }).ToTask();
         }
     }
 }

@@ -1,11 +1,18 @@
+using System;
 using System.Collections.Generic;
 
 namespace GraphQL.Language.AST
 {
+    /// <summary>
+    /// Represents the root node of a document.
+    /// </summary>
     public class Document : AbstractNode
     {
         private readonly List<IDefinition> _definitions;
 
+        /// <summary>
+        /// Initializes a new instance with no children.
+        /// </summary>
         public Document()
         {
             _definitions = new List<IDefinition>();
@@ -13,42 +20,57 @@ namespace GraphQL.Language.AST
             Fragments = new Fragments();
         }
 
+        /// <summary>
+        /// Gets or sets the query before being parsed into an AST document.
+        /// </summary>
         public string OriginalQuery { get; set; }
 
+        /// <inheritdoc/>
         public override IEnumerable<INode> Children => _definitions;
 
+        /// <summary>
+        /// Returns a list of operation nodes for this document.
+        /// </summary>
         public Operations Operations { get; }
 
+        /// <summary>
+        /// Returns a list of fragment nodes for this document.
+        /// </summary>
         public Fragments Fragments { get; }
 
+        /// <summary>
+        /// Adds a <see cref="FragmentDefinition"/> or <see cref="Operation"/> node to this document.
+        /// </summary>
         public void AddDefinition(IDefinition definition)
         {
-            _definitions.Add(definition);
+            _definitions.Add(definition ?? throw new ArgumentNullException(nameof(definition)));
 
-            if (definition is FragmentDefinition)
+            if (definition is FragmentDefinition fragmentDefinition)
             {
-                Fragments.Add((FragmentDefinition) definition);
+                Fragments.Add(fragmentDefinition);
             }
-            else if (definition is Operation)
+            else if (definition is Operation operation)
             {
-                Operations.Add((Operation) definition);
+                Operations.Add(operation);
             }
             else
             {
-                throw new ExecutionError("Unhandled document definition");
+                throw new ArgumentOutOfRangeException(nameof(definition), $"Unhandled document definition '{definition.GetType().Name}'");
             }
         }
 
-        public override string ToString()
-        {
-            return "Document{{definitions={0}}}".ToFormat(_definitions);
-        }
+        /// <inheritdoc />
+        public override string ToString() => $"Document{{definitions={string.Join(", ", _definitions)}}}";
 
+        /// <inheritdoc/>
         public override bool IsEqualTo(INode node)
         {
-            if (ReferenceEquals(null, node)) return false;
-            if (ReferenceEquals(this, node)) return true;
-            if (node.GetType() != this.GetType()) return false;
+            if (node is null)
+                return false;
+            if (ReferenceEquals(this, node))
+                return true;
+            if (node.GetType() != GetType())
+                return false;
 
             return true;
         }

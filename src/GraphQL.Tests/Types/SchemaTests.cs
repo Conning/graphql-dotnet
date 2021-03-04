@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using GraphQL.Types;
 using Shouldly;
@@ -44,6 +44,18 @@ namespace GraphQL.Tests.Types
         }
 
         [Fact]
+        public void registers_argument_input_objects_when_argument_resolved_type_is_set()
+        {
+            var schema = new ARootSchema();
+            schema.FindType("a");
+
+            ContainsTypeNames(
+                schema,
+                "DInputType",
+                "DInputType2");
+        }
+
+        [Fact]
         public void registers_type_when_list()
         {
             var schema = new ARootSchema();
@@ -71,7 +83,8 @@ namespace GraphQL.Tests.Types
         public void throw_error_on_missing_istypeof()
         {
             var schema = new InvalidUnionSchema();
-            Should.Throw<ExecutionError>(() => schema.FindType("a"));
+            //note: The exception occurs during Schema.CreateTypesLookup(), not during Schema.FindType()
+            Should.Throw<InvalidOperationException>(() => schema.FindType("a"));
         }
 
         [Fact]
@@ -99,6 +112,15 @@ namespace GraphQL.Tests.Types
         }
 
         [Fact]
+        public void registers_additional_duplicated_types()
+        {
+            var schema = new SchemaWithDuplicates();
+            schema.FindType("abcd");
+
+            ContainsTypeNames(schema, "SomeQuery", "SomeInterface", "SomeObject");
+        }
+
+        [Fact]
         public void registers_only_root_types()
         {
             var schema = new ARootSchema();
@@ -107,21 +129,35 @@ namespace GraphQL.Tests.Types
             DoesNotContainTypeNames(schema, "ASchemaType!");
         }
 
-        public void ContainsTypeNames(ISchema schema, params string[] typeNames)
+        [Fact]
+        public void handles_cycle_field_type()
+        {
+            var schema = new SimpleCycleSchema();
+            schema.FindType("CycleType").ShouldNotBeNull();
+        }
+
+        [Fact]
+        public void handles_stackoverflow_exception_for_cycle_field_type()
+        {
+            var schema = new ACyclingDerivingSchema(new FuncServiceProvider(t => t == typeof(AbstractGraphType) ? new ConcreteGraphType() : null));
+            Should.Throw<InvalidOperationException>(() => schema.FindType("abcd"));
+        }
+
+        private void ContainsTypeNames(ISchema schema, params string[] typeNames)
         {
             typeNames.Apply(typeName =>
             {
                 var type = schema.FindType(typeName);
-                type.ShouldNotBeNull("Did not find {0} in type lookup.".ToFormat(typeName));
+                type.ShouldNotBeNull($"Did not find {typeName} in type lookup.");
             });
         }
 
-        public void DoesNotContainTypeNames(Schema schema, params string[] typeNames)
+        private void DoesNotContainTypeNames(Schema schema, params string[] typeNames)
         {
             typeNames.Apply(typeName =>
             {
                 var type = schema.AllTypes.SingleOrDefault(x => x.Name == typeName);
-                type.ShouldBe(null, "Found {0} in type lookup.".ToFormat(typeName));
+                type.ShouldBe(null, $"Found {typeName} in type lookup.");
             });
         }
     }
@@ -137,6 +173,23 @@ namespace GraphQL.Tests.Types
             Query = new SomeQuery();
 
             RegisterType<SomeObject>();
+        }
+    }
+
+    public class SchemaWithDuplicates : Schema
+    {
+        public SchemaWithDuplicates()
+        {
+            Query = new SomeQuery();
+
+            RegisterType<SomeObject>();
+            RegisterType<SomeObject>();
+            RegisterType<SomeQuery>();
+            RegisterType<SomeQuery>();
+            RegisterType<SomeInterface>();
+            RegisterType<SomeInterface>();
+            RegisterType<StringGraphType>();
+            RegisterType<StringGraphType>();
         }
     }
 
@@ -260,11 +313,11 @@ namespace GraphQL.Tests.Types
     {
         public DSchemaType()
         {
-            Field<StringGraphType>("id", resolve: ctx => new {id = "id"});
+            Field<StringGraphType>("id", resolve: ctx => new { id = "id" });
             Field<StringGraphType>(
                 "filter",
-                arguments: new QueryArguments(new [] { new QueryArgument<DInputType> {Name = "input"} }),
-                resolve: ctx => new {id = "id"});
+                arguments: new QueryArguments(new QueryArgument<DInputType> { Name = "input", ResolvedType = new DInputType() }, new QueryArgument<DInputType2> { Name = "input2", ResolvedType = new DInputType2() }),
+                resolve: ctx => new { id = "id" });
             Field<ListGraphType<DListType>>("alist");
         }
     }
@@ -273,7 +326,17 @@ namespace GraphQL.Tests.Types
     {
         public DInputType()
         {
+            Name = "DInputType";
             Field<StringGraphType>("one");
+        }
+    }
+
+    public class DInputType2 : InputObjectGraphType
+    {
+        public DInputType2()
+        {
+            Name = "DInputType2";
+            Field<StringGraphType>("two");
         }
     }
 
@@ -308,15 +371,53 @@ namespace GraphQL.Tests.Types
 
     public class WithoutIsTypeOf1Type : ObjectGraphType
     {
-        public WithoutIsTypeOf1Type()
-        {
-        }
     }
 
     public class WithoutIsTypeOf2Type : ObjectGraphType
     {
-        public WithoutIsTypeOf2Type()
+    }
+
+    public class SimpleCycleSchema : Schema
+    {
+        public SimpleCycleSchema()
         {
+            Query = new CycleType();
         }
+    }
+
+    public class CycleType : ObjectGraphType
+    {
+        public CycleType()
+        {
+            Field<CycleType>();
+        }
+    }
+
+    public class ACyclingDerivingSchema : Schema
+    {
+        public ACyclingDerivingSchema(IServiceProvider provider) : base(provider)
+        {
+            Query = new CyclingQueryType();
+        }
+    }
+
+    public class CyclingQueryType : ObjectGraphType
+    {
+        public CyclingQueryType()
+        {
+            Field<AbstractGraphType>();
+        }
+    }
+
+    public abstract class AbstractGraphType : ObjectGraphType
+    {
+        public AbstractGraphType()
+        {
+            Field<AbstractGraphType>();
+        }
+    }
+
+    public class ConcreteGraphType : AbstractGraphType
+    {
     }
 }

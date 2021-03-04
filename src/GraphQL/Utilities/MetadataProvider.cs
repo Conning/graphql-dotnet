@@ -1,32 +1,34 @@
-﻿using System.Collections.Concurrent;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using GraphQL.Types;
 
 namespace GraphQL.Utilities
 {
+    /// <summary>
+    /// Default implementation of <see cref="IProvideMetadata"/>. This is the base class for numerous
+    /// descendants like <see cref="GraphType"/>, <see cref="FieldType"/>, <see cref="Schema"/> and others.
+    /// </summary>
     public class MetadataProvider : IProvideMetadata
     {
+        /// <inheritdoc />
         public IDictionary<string, object> Metadata { get; set; } = new ConcurrentDictionary<string, object>();
 
-        public TType GetMetadata<TType>(string key, TType defaultValue = default(TType))
+        /// <inheritdoc />
+        public TType GetMetadata<TType>(string key, TType defaultValue = default)
         {
-            if (!HasMetadata(key))
-            {
-                return defaultValue;
-            }
-
-            object item;
-            if (Metadata.TryGetValue(key, out item))
-            {
-                return (TType) item;
-            }
-
-            return defaultValue;
+            var local = Metadata;
+            return local != null && local.TryGetValue(key, out object item) ? (TType)item : defaultValue;
         }
 
-        public bool HasMetadata(string key)
+        /// <inheritdoc />
+        public TType GetMetadata<TType>(string key, Func<TType> defaultValueFactory)
         {
-            return Metadata.ContainsKey(key);
+            var local = Metadata;
+            return local != null && local.TryGetValue(key, out object item) ? (TType)item : defaultValueFactory();
         }
+
+        /// <inheritdoc />
+        public bool HasMetadata(string key) => Metadata?.ContainsKey(key) ?? false;
     }
 }

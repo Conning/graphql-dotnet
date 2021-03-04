@@ -6,10 +6,24 @@ using System.Threading.Tasks;
 
 namespace GraphQL.DataLoader
 {
+    /// <summary>
+    /// Provides extension methods for retrieving <see cref="IDataLoader"/> implementations via a <see cref="DataLoaderContext"/>
+    /// </summary>
     public static class DataLoaderContextExtensions
     {
-        public static Func<CancellationToken, TResult> WrapNonCancellableFunc<TResult>(Func<TResult> func) => (cancellationToken) => func();
+        /// <summary>
+        /// Returns a delegate which calls the delegate passed to this method, stripping off the <see cref="CancellationToken"/> in the process.
+        /// </summary>
+        /// <typeparam name="TResult">The type of the return value of the delegate.</typeparam>
+        /// <param name="func">The delegate to call.</param>
+        public static Func<CancellationToken, TResult> WrapNonCancellableFunc<TResult>(Func<TResult> func) => cancellationToken => func();
 
+        /// <summary>
+        /// Returns a delegate which calls the delegate passed to this method, stripping off the <see cref="CancellationToken"/> in the process.
+        /// </summary>
+        /// <typeparam name="T">The type of the argument of the delegate.</typeparam>
+        /// <typeparam name="TResult">The type of the return value of the delegate.</typeparam>
+        /// <param name="func">The delegate to call.</param>
         public static Func<T, CancellationToken, TResult> WrapNonCancellableFunc<T, TResult>(Func<T, TResult> func) => (arg, cancellationToken) => func(arg);
 
         /// <summary>
@@ -58,10 +72,11 @@ namespace GraphQL.DataLoader
         /// <param name="context">The <seealso cref="DataLoaderContext"/> to get or add a DataLoader to</param>
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A cancellable delegate to fetch data for some keys asynchronously</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
+        /// <param name="defaultValue">The value returned when no match is found in the dictionary, or default(T) if unspecified</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, T> GetOrAddBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, CancellationToken, Task<IDictionary<TKey, T>>> fetchFunc,
-            IEqualityComparer<TKey> keyComparer = null, T defaultValue = default(T))
+            IEqualityComparer<TKey> keyComparer = null, T defaultValue = default)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -80,10 +95,11 @@ namespace GraphQL.DataLoader
         /// <param name="context">The <seealso cref="DataLoaderContext"/> to get or add a DataLoader to</param>
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A delegate to fetch data for some keys asynchronously</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
+        /// <param name="defaultValue">The value returned when no match is found in the dictionary, or default(T) if unspecified</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, T> GetOrAddBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, Task<IDictionary<TKey, T>>> fetchFunc,
-            IEqualityComparer<TKey> keyComparer = null, T defaultValue = default(T))
+            IEqualityComparer<TKey> keyComparer = null, T defaultValue = default)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -103,10 +119,11 @@ namespace GraphQL.DataLoader
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc"></param>
         /// <param name="keySelector">A function to extract a key from each element.</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
+        /// <param name="defaultValue">The value returned when no match is found in the list, or default(T) if unspecified</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, T> GetOrAddBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, CancellationToken, Task<IEnumerable<T>>> fetchFunc,
-            Func<T, TKey> keySelector, IEqualityComparer<TKey> keyComparer = null, T defaultValue = default(T))
+            Func<T, TKey> keySelector, IEqualityComparer<TKey> keyComparer = null, T defaultValue = default)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -129,10 +146,11 @@ namespace GraphQL.DataLoader
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A delegate to fetch data for some keys asynchronously</param>
         /// <param name="keySelector">A function to extract a key from each element.</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
+        /// <param name="defaultValue">The value returned when no match is found in the list, or default(T) if unspecified</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, T> GetOrAddBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, Task<IEnumerable<T>>> fetchFunc,
-            Func<T, TKey> keySelector, IEqualityComparer<TKey> keyComparer = null, T defaultValue = default(T))
+            Func<T, TKey> keySelector, IEqualityComparer<TKey> keyComparer = null, T defaultValue = default)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -154,7 +172,7 @@ namespace GraphQL.DataLoader
         /// <param name="context">The <seealso cref="DataLoaderContext"/> to get or add a DataLoader to</param>
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A cancellable delegate to fetch data for some keys asynchronously</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, IEnumerable<T>> GetOrAddCollectionBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, CancellationToken, Task<ILookup<TKey, T>>> fetchFunc,
             IEqualityComparer<TKey> keyComparer = null)
@@ -176,7 +194,7 @@ namespace GraphQL.DataLoader
         /// <param name="context">The <seealso cref="DataLoaderContext"/> to get or add a DataLoader to</param>
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A delegate to fetch data for some keys asynchronously</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, IEnumerable<T>> GetOrAddCollectionBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, Task<ILookup<TKey, T>>> fetchFunc,
             IEqualityComparer<TKey> keyComparer = null)
@@ -199,7 +217,7 @@ namespace GraphQL.DataLoader
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A cancellable delegate to fetch data for some keys asynchronously</param>
         /// <param name="keySelector">A function to extract a key from each element.</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, IEnumerable<T>> GetOrAddCollectionBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, CancellationToken, Task<IEnumerable<T>>> fetchFunc,
             Func<T, TKey> keySelector, IEqualityComparer<TKey> keyComparer = null)
@@ -225,7 +243,7 @@ namespace GraphQL.DataLoader
         /// <param name="loaderKey">A unique key to identify the DataLoader instance</param>
         /// <param name="fetchFunc">A delegate to fetch data for some keys asynchronously</param>
         /// <param name="keySelector">A function to extract a key from each element.</param>
-        /// <param name="keyComparer">An <seealso cref="IEqualityComparer<T>"/> to compare keys.</param>
+        /// <param name="keyComparer">An <seealso cref="IEqualityComparer{T}"/> to compare keys.</param>
         /// <returns>A new or existing DataLoader instance</returns>
         public static IDataLoader<TKey, IEnumerable<T>> GetOrAddCollectionBatchLoader<TKey, T>(this DataLoaderContext context, string loaderKey, Func<IEnumerable<TKey>, Task<IEnumerable<T>>> fetchFunc,
             Func<T, TKey> keySelector, IEqualityComparer<TKey> keyComparer = null)

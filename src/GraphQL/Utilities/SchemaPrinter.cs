@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using GraphQL.Introspection;
@@ -8,11 +9,9 @@ using GraphQL.Types;
 
 namespace GraphQL.Utilities
 {
-    public class SchemaPrinter : IDisposable
+    public class SchemaPrinter //TODO: rewrite string concatenations to use buffer ?
     {
-        private ISchema _schema;
-
-        private readonly SchemaPrinterOptions _options;
+        protected SchemaPrinterOptions Options { get; }
 
         private readonly List<string> _scalars = new List<string>(
             new[]
@@ -28,16 +27,16 @@ namespace GraphQL.Utilities
             ISchema schema,
             SchemaPrinterOptions options = null)
         {
-            _schema = schema;
-            _options = options ?? new SchemaPrinterOptions();
+            Schema = schema;
+            Options = options ?? new SchemaPrinterOptions();
 
-            if (_options.CustomScalars?.Count > 0)
+            if (Options.CustomScalars?.Count > 0)
             {
-                _scalars.Fill(_options.CustomScalars);
+                _scalars.AddRange(Options.CustomScalars);
             }
         }
 
-        private ISchema Schema => _schema;
+        private ISchema Schema { get; set; }
 
         public string Print()
         {
@@ -56,10 +55,10 @@ namespace GraphQL.Utilities
                 Schema.Initialize();
             }
 
-            var directives = Schema.Directives.Where(d => directiveFilter(d.Name)).ToList();
+            var directives = Schema.Directives.Where(d => directiveFilter(d.Name)).OrderBy(d => d.Name, StringComparer.Ordinal).ToList();
             var types = Schema.AllTypes
                 .Where(t => typeFilter(t.Name))
-                .OrderBy(x => x.Name)
+                .OrderBy(x => x.Name, StringComparer.Ordinal)
                 .ToList();
 
             var result = new[]
@@ -74,14 +73,14 @@ namespace GraphQL.Utilities
             return string.Join(Environment.NewLine + Environment.NewLine, result) + Environment.NewLine;
         }
 
-        public bool IsDefinedType(string typeName)
+        public virtual bool IsDefinedType(string typeName)
         {
             return !IsIntrospectionType(typeName) && !IsBuiltInScalar(typeName);
         }
 
         public bool IsIntrospectionType(string typeName)
         {
-            return typeName.StartsWith("__");
+            return typeName.StartsWith("__", StringComparison.InvariantCulture);
         }
 
         public bool IsBuiltInScalar(string typeName)
@@ -91,7 +90,7 @@ namespace GraphQL.Utilities
 
         public bool IsSpecDirective(string directiveName)
         {
-            var names = new []
+            var names = new[]
             {
                 "skip",
                 "include",
@@ -102,7 +101,8 @@ namespace GraphQL.Utilities
 
         public string PrintSchemaDefinition(ISchema schema)
         {
-            if (IsSchemaOfCommonNames(Schema)) return null;
+            if (IsSchemaOfCommonNames(Schema))
+                return null;
 
             var operationTypes = new List<string>();
 
@@ -159,90 +159,56 @@ namespace GraphQL.Utilities
 
         public string PrintType(IGraphType type)
         {
-            if (type is EnumerationGraphType)
+            return type switch
             {
-                return PrintEnum((EnumerationGraphType)type);
-            }
-
-            if (type is ScalarGraphType)
-            {
-                return PrintScalar((ScalarGraphType)type);
-            }
-
-            if (type is IObjectGraphType)
-            {
-                return PrintObject((IObjectGraphType)type);
-            }
-
-            if (type is IInterfaceGraphType)
-            {
-                return PrintInterface((IInterfaceGraphType)type);
-            }
-
-            if (type is UnionGraphType)
-            {
-                return PrintUnion((UnionGraphType)type);
-            }
-
-            if (type is DirectiveGraphType)
-            {
-                return PrintDirective((DirectiveGraphType)type);
-            }
-
-            if (!(type is IInputObjectGraphType))
-            {
-                throw new InvalidOperationException("Unknown GraphType {0}".ToFormat(type.GetType().Name));
-            }
-
-            return PrintInputObject((IInputObjectGraphType)type);
+                EnumerationGraphType graphType => PrintEnum(graphType),
+                ScalarGraphType scalarGraphType => PrintScalar(scalarGraphType),
+                IObjectGraphType objectGraphType => PrintObject(objectGraphType),
+                IInterfaceGraphType interfaceGraphType => PrintInterface(interfaceGraphType),
+                UnionGraphType unionGraphType => PrintUnion(unionGraphType),
+                DirectiveGraphType directiveGraphType => PrintDirective(directiveGraphType),  //TODO: DirectiveGraphType does not inherit IGraphType
+                IInputObjectGraphType input => PrintInputObject(input),
+                _ => throw new InvalidOperationException($"Unknown GraphType '{type.GetType().Name}' with name '{type.Name}'")
+            };
         }
 
-        public string PrintScalar(ScalarGraphType type)
-        {
-            var description = PrintDescription(type.Description);
-            return description + "scalar {0}".ToFormat(type.Name);
-        }
+        public string PrintScalar(ScalarGraphType type) => $"{FormatDescription(type.Description)}scalar {type.Name}";
 
-        public string PrintObject(IObjectGraphType type)
+        public virtual string PrintObject(IObjectGraphType type)
         {
-            var description = PrintDescription(type.Description);
-
             var interfaces = type.ResolvedInterfaces.Select(x => x.Name).ToList();
-            var implementedInterfaces = interfaces.Any()
-                ? " implements {0}".ToFormat(string.Join(", ", interfaces))
+            var delimiter = Options.OldImplementsSyntax ? ", " : " & ";
+            var implementedInterfaces = interfaces.Count > 0
+                ? " implements {0}".ToFormat(string.Join(delimiter, interfaces))
                 : "";
 
-            return description + "type {1}{2} {{{0}{3}{0}}}".ToFormat(Environment.NewLine, type.Name, implementedInterfaces, PrintFields(type));
+            return FormatDescription(type.Description) + "type {1}{2} {{{0}{3}{0}}}".ToFormat(Environment.NewLine, type.Name, implementedInterfaces, PrintFields(type));
         }
 
-        public string PrintInterface(IInterfaceGraphType type)
+        public virtual string PrintInterface(IInterfaceGraphType type)
         {
-            var description = PrintDescription(type.Description);
-            return description + "interface {1} {{{0}{2}{0}}}".ToFormat(Environment.NewLine, type.Name, PrintFields(type));
+            return FormatDescription(type.Description) + "interface {1} {{{0}{2}{0}}}".ToFormat(Environment.NewLine, type.Name, PrintFields(type));
         }
 
         public string PrintUnion(UnionGraphType type)
         {
-            var description = PrintDescription(type.Description);
             var possibleTypes = string.Join(" | ", type.PossibleTypes.Select(x => x.Name));
-            return description + "union {0} = {1}".ToFormat(type.Name, possibleTypes);
+            return FormatDescription(type.Description) + "union {0} = {1}".ToFormat(type.Name, possibleTypes);
         }
 
         public string PrintEnum(EnumerationGraphType type)
         {
-            var description = PrintDescription(type.Description);
             var values = string.Join(Environment.NewLine, type.Values.Select(x => "  " + x.Name));
-            return description + "enum {1} {{{0}{2}{0}}}".ToFormat(Environment.NewLine, type.Name, values);
+            return FormatDescription(type.Description) + "enum {1} {{{0}{2}{0}}}".ToFormat(Environment.NewLine, type.Name, values);
         }
 
         public string PrintInputObject(IInputObjectGraphType type)
         {
-            var description = PrintDescription(type.Description);
-            var fields = type.Fields.Select(x => "  " + PrintInputValue(x));
-            return description + "input {1} {{{0}{2}{0}}}".ToFormat(Environment.NewLine, type.Name, string.Join(Environment.NewLine, fields));
+            var fields = type.Fields.Select(x => PrintInputValue(x));
+            return FormatDescription(type.Description) + "input {1} {{{0}{2}{0}}}".ToFormat(Environment.NewLine, type.Name, string.Join(Environment.NewLine, fields));
         }
 
-        public string PrintFields(IComplexGraphType type)
+        public virtual string PrintFields(IComplexGraphType type)
         {
             var fields = type?.Fields
                 .Select(x =>
@@ -251,8 +217,8 @@ namespace GraphQL.Utilities
                     x.Name,
                     Type = ResolveName(x.ResolvedType),
                     Args = PrintArgs(x),
-                    Description = _options.IncludeDescriptions ? PrintDescription(type.Description, "  ") : string.Empty,
-                    Deprecation = _options.IncludeDeprecationReasons ? PrintDeprecation(type.DeprecationReason) : string.Empty,
+                    Description = FormatDescription(x.Description, "  "),
+                    Deprecation = Options.IncludeDeprecationReasons ? PrintDeprecation(x.DeprecationReason) : "",
                 }).ToList();
 
             return string.Join(Environment.NewLine, fields?.Select(
@@ -261,7 +227,7 @@ namespace GraphQL.Utilities
 
         public string PrintArgs(FieldType field)
         {
-            if (field.Arguments == null || !field.Arguments.Any())
+            if (field.Arguments == null || field.Arguments.Count == 0)
             {
                 return string.Empty;
             }
@@ -269,17 +235,17 @@ namespace GraphQL.Utilities
             return "({0})".ToFormat(string.Join(", ", field.Arguments.Select(PrintInputValue)));
         }
 
-        public string PrintInputValue(FieldType argument)
+        public string PrintInputValue(FieldType field)
         {
-            var argumentType = argument.ResolvedType;
-            var desc = "{0}: {1}".ToFormat(argument.Name, ResolveName(argumentType));
+            var argumentType = field.ResolvedType;
+            var description = $"{FormatDescription(field.Description, "  ")}  {field.Name}: {ResolveName(argumentType)}";
 
-            if (argument.DefaultValue != null)
+            if (field.DefaultValue != null)
             {
-                desc += " = {0}".ToFormat(FormatDefaultValue(argument.DefaultValue, argumentType));
+                description += " = {0}".ToFormat(FormatDefaultValue(field.DefaultValue, argumentType));
             }
 
-            return desc;
+            return description;
         }
 
         public string PrintInputValue(QueryArgument argument)
@@ -298,83 +264,99 @@ namespace GraphQL.Utilities
         public string PrintDirective(DirectiveGraphType directive)
         {
             var builder = new StringBuilder();
-            builder.Append(PrintDescription(directive.Description));
+            if (Options.IncludeDescriptions)
+            {
+                builder.Append(PrintDescription(directive.Description));
+            }
             builder.AppendLine($"directive @{directive.Name}(");
-            builder.AppendLine(formatDirectiveArguments(directive.Arguments));
-            builder.Append($") on {formatDirectiveLocationList(directive.Locations)}");
+            builder.AppendLine(FormatDirectiveArguments(directive.Arguments));
+            builder.Append($") on {FormatDirectiveLocationList(directive.Locations)}");
             return builder.ToString().TrimStart();
         }
 
-        private string formatDirectiveArguments(QueryArguments arguments)
+        private string FormatDirectiveArguments(QueryArguments arguments)
         {
-            if (arguments == null || !arguments.Any()) return null;
-            return string.Join(Environment.NewLine, arguments.Select(arg=> $"  {PrintInputValue(arg)}"));
+            if (arguments == null || arguments.Count == 0)
+                return null;
+            return string.Join(Environment.NewLine, arguments.Select(arg => $"  {PrintInputValue(arg)}"));
         }
 
-        private string formatDirectiveLocationList(IEnumerable<DirectiveLocation> locations)
+        private string FormatDirectiveLocationList(IEnumerable<DirectiveLocation> locations)
         {
             var enums = new __DirectiveLocation();
             return string.Join(" | ", locations.Select(x => enums.Serialize(x)));
         }
 
+        protected string FormatDescription(string description, string indentation = "") => Options.IncludeDescriptions ? PrintDescription(description, indentation) : "";
+
         public string FormatDefaultValue(object value, IGraphType graphType)
         {
-            if (value is string)
+            return graphType switch
             {
-                return "\"{0}\"".ToFormat(value);
-            }
-
-            if (value is bool)
-            {
-                return value.ToString().ToLower();
-            }
-
-            if (IsEnumType(graphType))
-            {
-                return "{0}".ToFormat(SerializeEnumValue(graphType, value));
-            }
-
-            return "{0}".ToFormat(value);
+                NonNullGraphType nonNull => FormatDefaultValue(value, nonNull.ResolvedType),
+                ListGraphType list => "[{0}]".ToFormat(string.Join(", ", ((IEnumerable<object>)value).Select(i => FormatDefaultValue(i, list.ResolvedType)))),
+                IInputObjectGraphType input => FormatInputObjectValue(value, input),
+                EnumerationGraphType enumeration => enumeration.Serialize(value).ToString(),
+                ScalarGraphType _ => value switch
+                {
+                    string s => $"\"{s}\"",
+                    bool b => b ? "true" : "false",
+                    _ => value.ToString() // TODO: how to print custom scalars ("") ?
+                },
+                _ => throw new NotSupportedException($"Unsopported graph type '{graphType}'")
+            };
         }
 
-        private static bool IsEnumType(IGraphType type)
+        private string FormatInputObjectValue(object value, IInputObjectGraphType input)
         {
-            return type.GetNamedType() is EnumerationGraphType;
-        }
+            var sb = new StringBuilder();
+            sb.Append("{ ");
 
-        private static object SerializeEnumValue(IGraphType type, object value)
-        {
-            if (type is NonNullGraphType)
+            foreach (var field in input.Fields)
             {
-                var nullable = (NonNullGraphType)type;
-                type = nullable.ResolvedType;
+                string propertyName = field.GetMetadata<string>(ComplexGraphType<object>.ORIGINAL_EXPRESSION_PROPERTY_NAME) ?? field.Name;
+                PropertyInfo propertyInfo;
+
+                try
+                {
+                    propertyInfo = value.GetType().GetProperty(propertyName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+                }
+                catch (AmbiguousMatchException)
+                {
+                    propertyInfo = value.GetType().GetProperty(propertyName, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                }
+
+                object propertyValue = propertyInfo.GetValue(value);
+                if (propertyValue != null)
+                {
+                    sb.Append(field.Name)
+                       .Append(": ")
+                       .Append(FormatDefaultValue(propertyValue, field.ResolvedType))
+                       .Append(", ");
+                }
             }
 
-            return ((EnumerationGraphType)type).Serialize(value);
+            sb.Length -= 2;
+            sb.Append(" }");
+            return sb.ToString();
         }
 
         public static string ResolveName(IGraphType type)
         {
-            if (type is NonNullGraphType)
+            return type switch
             {
-                var nullable = (NonNullGraphType)type;
-                return "{0}!".ToFormat(ResolveName(nullable.ResolvedType));
-            }
-
-            if (type is ListGraphType)
-            {
-                var list = (ListGraphType)type;
-                return "[{0}]".ToFormat(ResolveName(list.ResolvedType));
-            }
-
-            return type?.Name;
+                NonNullGraphType nonNull => $"{ResolveName(nonNull.ResolvedType)}!",
+                ListGraphType list => $"[{ResolveName(list.ResolvedType)}]",
+                _ => type?.Name
+            };
         }
 
         public string PrintDescription(string description, string indentation = "", bool firstInBlock = true)
         {
-            if (string.IsNullOrWhiteSpace(description)) return "";
+            if (string.IsNullOrWhiteSpace(description))
+                return "";
 
-            indentation = indentation ?? "";
+            indentation ??= "";
 
             // normalize newlines
             description = description.Replace("\r", "");
@@ -394,10 +376,7 @@ namespace GraphQL.Utilities
                     // For > 120 character long lines, cut at space boundaries into sublines
                     // of ~80 chars.
                     var sublines = BreakLine(line, 120 - indentation.Length);
-                    sublines.Apply(sub =>
-                    {
-                        desc += $"{indentation}# {sub}{Environment.NewLine}";
-                    });
+                    sublines.Apply(sub => desc += $"{indentation}# {sub}{Environment.NewLine}");
                 }
             });
 
@@ -417,12 +396,12 @@ namespace GraphQL.Utilities
         {
             if (line.Length < len + 5)
             {
-                return new[] {line};
+                return new[] { line };
             }
             var parts = Regex.Split(line, $"((?: |^).{{15,{len - 40}}}(?= |$))");
             if (parts.Length < 4)
             {
-                return new[] {line};
+                return new[] { line };
             }
             var sublines = new List<string>
             {
@@ -433,11 +412,6 @@ namespace GraphQL.Utilities
                 sublines.Add(parts[i].Substring(1) + parts[i + 1]);
             }
             return sublines.ToArray();
-        }
-
-        public void Dispose()
-        {
-            _schema = null;
         }
     }
 }

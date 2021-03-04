@@ -1,13 +1,12 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using GraphQL.SystemTextJson;
 using GraphQL.Types;
-using GraphQL.Http;
 using GraphQL.Validation;
 using GraphQLParser.Exceptions;
 using Shouldly;
-using Newtonsoft.Json.Linq;
 
 namespace GraphQL.Tests
 {
@@ -22,8 +21,8 @@ namespace GraphQL.Tests
             string expected,
             Inputs inputs = null,
             object root = null,
-            object userContext = null,
-            CancellationToken cancellationToken = default(CancellationToken),
+            IDictionary<string, object> userContext = null,
+            CancellationToken cancellationToken = default,
             IEnumerable<IValidationRule> rules = null)
         {
             var queryResult = CreateQueryResult(expected);
@@ -40,12 +39,12 @@ namespace GraphQL.Tests
         {
             var runResult = Executer.ExecuteAsync(options).Result;
 
-            var writtenResult = Writer.Write(runResult);
-            var expectedResult = Writer.Write(expectedExecutionResult);
+            var writtenResult = Writer.WriteToStringAsync(runResult).Result;
+            var expectedResult = Writer.WriteToStringAsync(expectedExecutionResult).Result;
 
-//#if DEBUG
-//            Console.WriteLine(writtenResult);
-//#endif
+            //#if DEBUG
+            //            Console.WriteLine(writtenResult);
+            //#endif
 
             string additionalInfo = null;
 
@@ -67,8 +66,8 @@ namespace GraphQL.Tests
             ExecutionResult expectedExecutionResult,
             Inputs inputs,
             object root,
-            object userContext = null,
-            CancellationToken cancellationToken = default(CancellationToken),
+            IDictionary<string, object> userContext = null,
+            CancellationToken cancellationToken = default,
             IEnumerable<IValidationRule> rules = null)
         {
             var runResult = Executer.ExecuteAsync(_ =>
@@ -82,12 +81,12 @@ namespace GraphQL.Tests
                 _.ValidationRules = rules;
             }).GetAwaiter().GetResult();
 
-            var writtenResult = Writer.Write(runResult);
-            var expectedResult = Writer.Write(expectedExecutionResult);
+            var writtenResult = Writer.WriteToStringAsync(runResult).GetAwaiter().GetResult();
+            var expectedResult = Writer.WriteToStringAsync(expectedExecutionResult).GetAwaiter().GetResult();
 
-//#if DEBUG
-//            Console.WriteLine(writtenResult);
-//#endif
+            //#if DEBUG
+            //            Console.WriteLine(writtenResult);
+            //#endif
 
             string additionalInfo = null;
 
@@ -103,14 +102,6 @@ namespace GraphQL.Tests
             return runResult;
         }
 
-        public ExecutionResult CreateQueryResult(string result)
-        {
-            object expected = null;
-            if (!string.IsNullOrWhiteSpace(result))
-            {
-                expected = JObject.Parse(result);
-            }
-            return new ExecutionResult { Data = expected };
-        }
+        public ExecutionResult CreateQueryResult(string result) => result.ToExecutionResult();
     }
 }

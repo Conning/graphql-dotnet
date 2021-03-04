@@ -1,4 +1,4 @@
-﻿using GraphQL.Types;
+using GraphQL.Types;
 using Xunit;
 
 namespace GraphQL.Tests.Bugs
@@ -14,9 +14,7 @@ namespace GraphQL.Tests.Bugs
                 }
             ";
 
-            var expected = @"{
-              set: 24.15
-            }";
+            var expected = @"{ ""set"": 24.15 }";
 
             AssertQuerySuccess(query, expected);
         }
@@ -36,7 +34,7 @@ namespace GraphQL.Tests.Bugs
         {
             Field<DecimalGraphType>(
                 "set",
-                arguments: new QueryArguments(new QueryArgument<DecimalGraphType> { Name = "request"}),
+                arguments: new QueryArguments(new QueryArgument<DecimalGraphType> { Name = "request" }),
                 resolve: context =>
                 {
                     var val = context.GetArgument<decimal>("request");

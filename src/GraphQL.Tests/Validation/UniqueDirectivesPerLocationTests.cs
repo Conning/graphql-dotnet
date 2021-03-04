@@ -1,3 +1,4 @@
+using GraphQL.Validation.Errors;
 using GraphQL.Validation.Rules;
 using Xunit;
 
@@ -57,7 +58,7 @@ namespace GraphQL.Tests.Validation
         }
 
         [Fact]
-        public void duplicare_directives_in_one_location()
+        public void duplicate_directives_in_one_location()
         {
             ShouldFailRule(_ =>
             {
@@ -71,7 +72,7 @@ namespace GraphQL.Tests.Validation
         }
 
         [Fact]
-        public void many_duplicare_directives_in_one_location()
+        public void many_duplicate_directives_in_one_location()
         {
             ShouldFailRule(_ =>
             {
@@ -86,7 +87,7 @@ namespace GraphQL.Tests.Validation
         }
 
         [Fact]
-        public void different_duplicare_directives_in_one_location()
+        public void different_duplicate_directives_in_one_location()
         {
             ShouldFailRule(_ =>
             {
@@ -101,7 +102,7 @@ namespace GraphQL.Tests.Validation
         }
 
         [Fact]
-        public void duplicare_directives_in_many_locations()
+        public void duplicate_directives_in_many_locations()
         {
             ShouldFailRule(_ =>
             {
@@ -125,7 +126,7 @@ namespace GraphQL.Tests.Validation
         {
             _.Error(err =>
             {
-                err.Message = Rule.DuplicateDirectiveMessage(directiveName);
+                err.Message = UniqueDirectivesPerLocationError.DuplicateDirectiveMessage(directiveName);
                 err.Loc(line1, column1);
                 err.Loc(line2, column2);
             });

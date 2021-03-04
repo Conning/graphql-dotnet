@@ -1,23 +1,29 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
 using GraphQL.Language.AST;
 
 namespace GraphQL.Validation
 {
-    public class MatchingNodeListener
-    {
-        public Func<INode, bool> Matches { get; set; }
-        public Action<INode> Enter { get; set; }
-        public Action<INode> Leave { get; set; }
-    }
-
+    /// <summary>
+    /// A <see cref="INodeVisitor"/> which allows for easy configuration of multiple child node listeners
+    /// each of which only respond to the type of node that they are configured for.
+    /// </summary>
     public class EnterLeaveListener : INodeVisitor
     {
-        private readonly List<MatchingNodeListener> _listeners =
-            new List<MatchingNodeListener>();
+        private readonly List<INodeVisitor> _listeners =
+            new List<INodeVisitor>();
 
+        /// <summary>
+        /// Initializes a new instance with no configured listeners.
+        /// </summary>
+        public EnterLeaveListener()
+        {
+
+        }
+
+        /// <summary>
+        /// Initializes a new instance and runs the supplied configuration delegate.
+        /// </summary>
         public EnterLeaveListener(Action<EnterLeaveListener> configure)
         {
             configure(this);
@@ -25,45 +31,33 @@ namespace GraphQL.Validation
 
         void INodeVisitor.Enter(INode node)
         {
-            _listeners
-                .Where(l => l.Enter != null && l.Matches(node))
-                .Apply(l => l.Enter(node));
+            foreach (var listener in _listeners)
+            {
+                listener.Enter(node);
+            }
         }
 
         void INodeVisitor.Leave(INode node)
         {
-            _listeners
-                .Where(l => l.Leave != null && l.Matches(node))
-                .Apply(l => l.Leave(node));
+            // Shouldn't this be done in reverse?
+            foreach (var listener in _listeners)
+            {
+                listener.Leave(node);
+            }
         }
 
-        public void Match<T>(
-            Action<T> enter = null,
-            Action<T> leave = null)
-            where T : INode
+        /// <summary>
+        /// Configures an event listener for the specified node type.
+        /// </summary>
+        /// <typeparam name="TNode">The type of the AST node to listen for.</typeparam>
+        /// <param name="enter">A delegate to execute when the node of specified type is entered.</param>
+        /// <param name="leave">A delegate to execute when the node of specified type is left.</param>
+        public void Match<TNode>(
+            Action<TNode> enter = null,
+            Action<TNode> leave = null)
+            where TNode : INode
         {
-            if (enter == null && leave == null)
-            {
-                throw new ExecutionError("Must provide an enter or leave function.");
-            }
-
-            Func<INode, bool> matches = n => n.GetType().IsAssignableFrom(typeof(T));
-
-            var listener = new MatchingNodeListener
-            {
-                Matches = matches
-            };
-
-            if (enter != null)
-            {
-                listener.Enter = n => enter((T) n);
-            }
-
-            if (leave != null)
-            {
-                listener.Leave = n => leave((T) n);
-            }
-
+            var listener = new MatchingNodeVisitor<TNode>(enter, leave);
             _listeners.Add(listener);
         }
     }

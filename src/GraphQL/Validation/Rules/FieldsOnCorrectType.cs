@@ -1,41 +1,30 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using GraphQL.Language.AST;
 using GraphQL.Types;
 using GraphQL.Utilities;
+using GraphQL.Validation.Errors;
 
 namespace GraphQL.Validation.Rules
 {
-  /// <summary>
-  /// Fields on correct type
-  ///
-  /// A GraphQL document is only valid if all fields selected are defined by the
-  /// parent type, or are an allowed meta field such as __typename
-  /// </summary>
-  public class FieldsOnCorrectType : IValidationRule
+    /// <summary>
+    /// Fields on correct type:
+    ///
+    /// A GraphQL document is only valid if all fields selected are defined by the
+    /// parent type, or are an allowed meta field such as __typename.
+    /// </summary>
+    public class FieldsOnCorrectType : IValidationRule
     {
-        public string UndefinedFieldMessage(
-            string fieldName,
-            string type,
-            IEnumerable<string> suggestedTypeNames,
-            IEnumerable<string> suggestedFieldNames)
-        {
-            var message = $"Cannot query field \"{fieldName}\" on type \"{type}\".";
+        /// <summary>
+        /// Returns a static instance of this validation rule.
+        /// </summary>
+        public static readonly FieldsOnCorrectType Instance = new FieldsOnCorrectType();
 
-            if (suggestedTypeNames != null && suggestedTypeNames.Any())
-            {
-                var suggestions = StringUtils.QuotedOrList(suggestedTypeNames);
-                message += $" Did you mean to use an inline fragment on {suggestions}?";
-            }
-            else if (suggestedFieldNames != null && suggestedFieldNames.Any())
-            {
-                message += $" Did you mean {StringUtils.QuotedOrList(suggestedFieldNames)}?";
-            }
-
-            return message;
-        }
-
-        public INodeVisitor Validate(ValidationContext context)
+        /// <inheritdoc/>
+        /// <exception cref="FieldsOnCorrectTypeError"/>
+        public Task<INodeVisitor> ValidateAsync(ValidationContext context)
         {
             return new EnterLeaveListener(_ =>
             {
@@ -52,42 +41,34 @@ namespace GraphQL.Validation.Rules
                             var fieldName = node.Name;
 
                             // First determine if there are any suggested types to condition on.
-                            var suggestedTypeNames = getSuggestedTypeNames(context.Schema, type, fieldName).ToList();
+                            var suggestedTypeNames = GetSuggestedTypeNames(type, fieldName).ToList();
 
                             // If there are no suggested types, then perhaps this was a typo?
-                            var suggestedFieldNames = suggestedTypeNames.Any()
-                                ? new string[] {}
-                                : getSuggestedFieldNames(type, fieldName);
+                            var suggestedFieldNames = suggestedTypeNames.Count > 0
+                                ? Array.Empty<string>()
+                                : GetSuggestedFieldNames(type, fieldName);
 
-                            // Retport an error, including helpful suggestions.
-                            context.ReportError(new ValidationError(
-                                context.OriginalQuery,
-                                "5.2.1",
-                                UndefinedFieldMessage(fieldName, type.Name, suggestedTypeNames, suggestedFieldNames),
-                                node
-                                ));
+                            // Report an error, including helpful suggestions.
+                            context.ReportError(new FieldsOnCorrectTypeError(context, node, type, suggestedTypeNames, suggestedFieldNames));
                         }
                     }
                 });
-            });
+            }).ToTask();
         }
+
         /// <summary>
         /// Go through all of the implementations of type, as well as the interfaces
         /// that they implement. If any of those types include the provided field,
         /// suggest them, sorted by how often the type is referenced,  starting
         /// with Interfaces.
         /// </summary>
-        private IEnumerable<string> getSuggestedTypeNames(
-          ISchema schema,
-          IGraphType type,
-          string fieldName)
+        private IEnumerable<string> GetSuggestedTypeNames(IGraphType type, string fieldName)
         {
-            if (type is IAbstractGraphType)
+            if (type is IAbstractGraphType absType)
             {
                 var suggestedObjectTypes = new List<string>();
                 var interfaceUsageCount = new LightweightCache<string, int>(key => 0);
 
-                var absType = type as IAbstractGraphType;
                 absType.PossibleTypes.Apply(possibleType =>
                 {
                     if (!possibleType.HasField(fieldName))
@@ -119,13 +100,12 @@ namespace GraphQL.Validation.Rules
         /// For the field name provided, determine if there are any similar field names
         /// that may be the result of a typo.
         /// </summary>
-        private IEnumerable<string> getSuggestedFieldNames(
+        private IEnumerable<string> GetSuggestedFieldNames(
           IGraphType type,
           string fieldName)
         {
-            if (type is IComplexGraphType)
+            if (type is IComplexGraphType complexType)
             {
-                var complexType = type as IComplexGraphType;
                 return StringUtils.SuggestionList(fieldName, complexType.Fields.Select(x => x.Name));
             }
 

@@ -1,46 +1,135 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using GraphQL.Conversion;
 using GraphQL.Introspection;
+using GraphQL.Types.Relay;
+using GraphQL.Utilities;
 
 namespace GraphQL.Types
 {
+    /// <summary>
+    /// Provides lookup for all schema types and has algorithms for discovering them.
+    /// </summary>
     public class GraphTypesLookup
     {
-        private readonly IDictionary<string, IGraphType> _types = new Dictionary<string, IGraphType>();
-
-        private readonly object _lock = new object();
-
-        public GraphTypesLookup()
+        // Introspection types http://spec.graphql.org/June2018/#sec-Schema-Introspection
+        private readonly Dictionary<Type, IGraphType> _introspectionTypes = new IGraphType[]
         {
-            AddType<StringGraphType>();
-            AddType<BooleanGraphType>();
-            AddType<FloatGraphType>();
-            AddType<IntGraphType>();
-            AddType<IdGraphType>();
-            AddType<DateGraphType>();
-            AddType<DecimalGraphType>();
+            new __DirectiveLocation(),
+            new __TypeKind(),
+            new __EnumValue(),
+            new __Directive(),
+            new __Field(),
+            new __InputValue(),
+            new __Type(),
+            new __Schema()
+        }
+        .ToDictionary(t => t.GetType());
 
-            AddType<__Schema>();
-            AddType<__Type>();
-            AddType<__Directive>();
-            AddType<__Field>();
-            AddType<__EnumValue>();
-            AddType<__InputValue>();
-            AddType<__TypeKind>();
+        // Standard scalars https://graphql.github.io/graphql-spec/June2018/#sec-Scalars
+        private readonly Dictionary<Type, IGraphType> _builtInScalars = new IGraphType[]
+        {
+            new StringGraphType(),
+            new BooleanGraphType(),
+            new FloatGraphType(),
+            new IntGraphType(),
+            new IdGraphType(),
+        }
+        .ToDictionary(t => t.GetType());
+
+        // .NET custom scalars
+        private readonly Dictionary<Type, IGraphType> _builtInCustomScalars = new IGraphType[]
+        {
+            new DateGraphType(),
+            new DateTimeGraphType(),
+            new DateTimeOffsetGraphType(),
+            new TimeSpanSecondsGraphType(),
+            new TimeSpanMillisecondsGraphType(),
+            new DecimalGraphType(),
+            new UriGraphType(),
+            new GuidGraphType(),
+            new ShortGraphType(),
+            new UShortGraphType(),
+            new UIntGraphType(),
+            new LongGraphType(),
+            new BigIntGraphType(),
+            new ULongGraphType(),
+            new ByteGraphType(),
+            new SByteGraphType(),
+        }
+        .ToDictionary(t => t.GetType());
+
+        private readonly IDictionary<string, IGraphType> _types = new Dictionary<string, IGraphType>();
+        private readonly TypeCollectionContext _context;
+        private readonly object _lock = new object();
+        private bool _sealed;
+
+        /// <summary>
+        /// Initializes a new instance with the <see cref="CamelCaseNameConverter"/>.
+        /// </summary>
+        public GraphTypesLookup() : this(CamelCaseNameConverter.Instance) { }
+
+        /// <summary>
+        /// Initalizes a new instance with the specified <see cref="INameConverter"/>.
+        /// </summary>
+        public GraphTypesLookup(INameConverter nameConverter)
+        {
+#pragma warning disable IDE0016 // Use 'throw' expression; if this rule is applied here, then the null check is moved to the very end of the method - this is not what we want
+            if (nameConverter == null)
+                throw new ArgumentNullException(nameof(nameConverter));
+#pragma warning restore IDE0016
+
+            _context = new TypeCollectionContext(
+               type => BuildNamedType(type, t => _builtInScalars.TryGetValue(t, out var graphType) ? graphType : _introspectionTypes.TryGetValue(t, out graphType) ? graphType : (IGraphType)Activator.CreateInstance(t)),
+               (name, type, ctx) =>
+               {
+                   string trimmed = name.TrimGraphQLTypes();
+                   lock (_lock)
+                   {
+                       SetGraphType(trimmed, type);
+                   }
+                   ctx.AddType(trimmed, type, null);
+               });
+
+            // Add introspection types. Note that introspection types rely on the
+            // CamelCaseNameConverter, as some fields are defined in pascal case - e.g. Field(x => x.Name)
+            NameConverter = CamelCaseNameConverter.Instance;
+
+            foreach (var introspectionType in _introspectionTypes.Values)
+                AddType(introspectionType, _context);
+
+            // set the name converter properly
+            NameConverter = nameConverter;
         }
 
+        private void CheckSealed()
+        {
+            if (_sealed)
+                throw new InvalidOperationException("GraphTypesLookup is sealed for modifications. You attempt to modify schema after it was initialized.");
+        }
+
+        private IGraphType BuildNamedType(Type type, Func<Type, IGraphType> resolver) => type.BuildNamedType(t => this[t] ?? resolver(t));
+
+        /// <summary>
+        /// Initializes a new instance for the specified graph types and directives, and with the specified type resolver and name converter.
+        /// </summary>
+        /// <param name="types">A list of graph type instances to register in the lookup table.</param>
+        /// <param name="directives">A list of directives to register.</param>
+        /// <param name="resolveType">A delegate which returns an instance of a graph type from its .NET type.</param>
+        /// <param name="nameConverter">A name converter to use for the specified graph types.</param>
+        /// <param name="seal">Prevents additional types from being added to the lookup table.</param>
         public static GraphTypesLookup Create(
             IEnumerable<IGraphType> types,
             IEnumerable<DirectiveGraphType> directives,
             Func<Type, IGraphType> resolveType,
-            IFieldNameConverter fieldNameConverter)
+            INameConverter nameConverter,
+            bool seal = false)
         {
-            var lookup = new GraphTypesLookup();
-            lookup.FieldNameConverter = fieldNameConverter ?? new CamelCaseFieldNameConverter();
+            var lookup = nameConverter == null ? new GraphTypesLookup() : new GraphTypesLookup(nameConverter);
 
-            var ctx = new TypeCollectionContext(resolveType, (name, graphType, context) =>
+            var ctx = new TypeCollectionContext(t => lookup._builtInScalars.TryGetValue(t, out var graphType) ? graphType : resolveType(t), (name, graphType, context) =>
             {
                 if (lookup[name] == null)
                 {
@@ -48,46 +137,68 @@ namespace GraphQL.Types
                 }
             });
 
-            types.Apply(type =>
+            foreach (var type in types)
             {
                 lookup.AddType(type, ctx);
-            });
+            }
 
-            var introspectionType = typeof(SchemaIntrospection);
+            // these fields must not have their field names translated by INameConverter; see HandleField
+            lookup.HandleField(null, lookup.SchemaMetaFieldType, ctx, false);
+            lookup.HandleField(null, lookup.TypeMetaFieldType, ctx, false);
+            lookup.HandleField(null, lookup.TypeNameMetaFieldType, ctx, false);
 
-            lookup.HandleField(introspectionType, SchemaIntrospection.SchemaMeta, ctx);
-            lookup.HandleField(introspectionType, SchemaIntrospection.TypeMeta, ctx);
-            lookup.HandleField(introspectionType, SchemaIntrospection.TypeNameMeta, ctx);
-
-            directives.Apply(directive =>
+            foreach (var directive in directives)
             {
-                directive.Arguments?.Apply(arg =>
+                if (directive.Arguments == null)
+                    continue;
+
+                foreach (var arg in directive.Arguments)
                 {
                     if (arg.ResolvedType != null)
                     {
+                        lookup.AddTypeIfNotRegistered(arg.ResolvedType, ctx);
                         arg.ResolvedType = lookup.ConvertTypeReference(directive, arg.ResolvedType);
-                        return;
                     }
-
-                    arg.ResolvedType = lookup.BuildNamedType(arg.Type, ctx.ResolveType);
-                });
-            });
+                    else
+                    {
+                        lookup.AddTypeIfNotRegistered(arg.Type, ctx);
+                        arg.ResolvedType = lookup.BuildNamedType(arg.Type, ctx.ResolveType);
+                    }
+                }
+            }
 
             lookup.ApplyTypeReferences();
+
+            Debug.Assert(ctx.InFlightRegisteredTypes.Count == 0);
+            lookup._sealed = seal;
 
             return lookup;
         }
 
-        public IFieldNameConverter FieldNameConverter { get; set; } = new CamelCaseFieldNameConverter();
+        /// <summary>
+        /// Gets or sets the name converter used when adding types to the lookup table.
+        /// </summary>
+        public INameConverter NameConverter { get; set; }
 
-        public void Clear()
+        internal void Clear(bool internalCall)
         {
+            if (!internalCall)
+                CheckSealed();
+
             lock (_lock)
             {
                 _types.Clear();
             }
         }
 
+        /// <summary>
+        /// Removes all discovered types from lookup.
+        /// </summary>
+        public void Clear() => Clear(false);
+
+        /// <summary>
+        /// Returns a list of all of the discovered types from the lookup table.
+        /// </summary>
         public IEnumerable<IGraphType> All()
         {
             lock (_lock)
@@ -96,6 +207,9 @@ namespace GraphQL.Types
             }
         }
 
+        /// <summary>
+        /// Returns a graph type instance from the lookup table by its GraphQL type name.
+        /// </summary>
         public IGraphType this[string typeName]
         {
             get
@@ -115,13 +229,19 @@ namespace GraphQL.Types
             }
             set
             {
+                CheckSealed();
+
                 lock (_lock)
                 {
-                    _types[typeName.TrimGraphQLTypes()] = value;
+                    SetGraphType(typeName.TrimGraphQLTypes(), value);
                 }
             }
         }
 
+        /// <summary>
+        /// Returns a graph type instance from the lookup table by its .NET type.
+        /// </summary>
+        /// <param name="type">The .NET type of the graph type.</param>
         public IGraphType this[Type type]
         {
             get
@@ -134,52 +254,43 @@ namespace GraphQL.Types
             }
         }
 
+        // TODO: remove new() constraint
+        /// <summary>
+        /// Adds the specified graph type to the lookup table.
+        /// </summary>
+        /// <typeparam name="TType">The graph type to add.</typeparam>
         public void AddType<TType>()
             where TType : IGraphType, new()
         {
-            var context = new TypeCollectionContext(
-                type =>
-                {
-                    return BuildNamedType(type, t => (IGraphType) Activator.CreateInstance(t));
-                },
-                (name, type, _) =>
-                {
-                    var trimmed = name.TrimGraphQLTypes();
-                    lock (_lock)
-                    {
-                        _types[trimmed] = type;
-                    }
-                    _?.AddType(trimmed, type, null);
-                });
+            CheckSealed();
 
-            AddType<TType>(context);
+            AddType<TType>(_context);
+
+            Debug.Assert(_context.InFlightRegisteredTypes.Count == 0);
         }
 
-        private IGraphType BuildNamedType(Type type, Func<Type, IGraphType> resolver)
-        {
-            return type.BuildNamedType(t =>
-            {
-                var exists = this[t];
-
-                if (exists != null)
-                {
-                    return exists;
-                }
-
-                return resolver(t);
-            });
-        }
-
+        // TODO: make private
+        /// <summary>
+        /// Adds the specified graph type to the lookup table using a specified <see cref="TypeCollectionContext"/>.
+        /// </summary>
         public void AddType<TType>(TypeCollectionContext context)
             where TType : IGraphType
         {
+            CheckSealed();
+
             var type = typeof(TType).GetNamedType();
             var instance = context.ResolveType(type);
             AddType(instance, context);
         }
 
+        // TODO: make private
+        /// <summary>
+        /// Adds the specified graph type instance to the lookup table using a specified <see cref="TypeCollectionContext"/>.
+        /// </summary>
         public void AddType(IGraphType type, TypeCollectionContext context)
         {
+            CheckSealed();
+
             if (type == null || type is GraphQLTypeReference)
             {
                 return;
@@ -187,78 +298,78 @@ namespace GraphQL.Types
 
             if (type is NonNullGraphType || type is ListGraphType)
             {
-                throw new ExecutionError("Only add root types.");
+                throw new ArgumentOutOfRangeException(nameof(type), "Only add root types.");
             }
 
             var name = type.CollectTypes(context).TrimGraphQLTypes();
             lock (_lock)
             {
-                _types[name] = type;
+                SetGraphType(name, type);
             }
 
-            if (type is IComplexGraphType)
+            if (type is IComplexGraphType complexType)
             {
-                var complexType = type as IComplexGraphType;
-                try
+                foreach (var field in complexType.Fields)
                 {
-                    complexType.Fields.ToArray().Apply(field => { HandleField(type.GetType(), field, context); });
-                }
-                catch (Exception e)
-                {
-                    throw new ExecutionError(( "Complex type {0} threw exception while handling fields.  Error is {1}"
-                        .ToFormat(complexType.Name, e.Message)));
+                    try
+                    {
+                        HandleField(complexType, field, context, true);
+                    }
+                    catch (Exception e)
+                    {
+                        throw new ExecutionError(( "Complex type {0} threw exception while handling fields.  Error is {1}"
+                            .ToFormat(complexType.Name, e.Message)));
+                    }
                 }
             }
 
-            if (type is IObjectGraphType)
+            if (type is IObjectGraphType obj)
             {
-                var obj = (IObjectGraphType) type;
-                obj.Interfaces.Apply(objectInterface =>
+                foreach (var objectInterface in obj.Interfaces)
                 {
                     AddTypeIfNotRegistered(objectInterface, context);
 
-                    var interfaceInstance = this[objectInterface] as IInterfaceGraphType;
-                    if (interfaceInstance != null)
+                    if (this[objectInterface] is IInterfaceGraphType interfaceInstance)
                     {
                         obj.AddResolvedInterface(interfaceInstance);
                         interfaceInstance.AddPossibleType(obj);
 
                         if (interfaceInstance.ResolveType == null && obj.IsTypeOf == null)
                         {
-                            throw new ExecutionError((
-                                "Interface type {0} does not provide a \"resolveType\" function " +
-                                "and possible Type \"{1}\" does not provide a \"isTypeOf\" function.  " +
-                                "There is no way to resolve this possible type during execution.")
-                                .ToFormat(interfaceInstance.Name, obj.Name));
+                            throw new InvalidOperationException(
+                               $"Interface type \"{interfaceInstance.Name}\" does not provide a \"resolveType\" function " +
+                               $"and possible Type \"{obj.Name}\" does not provide a \"isTypeOf\" function. " +
+                                "There is no way to resolve this possible type during execution.");
                         }
                     }
-                });
+                }
             }
 
-            if (type is UnionGraphType)
+            if (type is UnionGraphType union)
             {
-                var union = (UnionGraphType) type;
-
                 if (!union.Types.Any() && !union.PossibleTypes.Any())
                 {
-                    throw new ExecutionError("Must provide types for Union {0}.".ToFormat(union));
+                    throw new InvalidOperationException($"Must provide types for Union '{union}'.");
                 }
 
-                union.PossibleTypes.Apply(unionedType =>
+                foreach (var unionedType in union.PossibleTypes)
                 {
+                    // skip references
+                    if (unionedType is GraphQLTypeReference)
+                        continue;
+
                     AddTypeIfNotRegistered(unionedType, context);
 
                     if (union.ResolveType == null && unionedType.IsTypeOf == null)
                     {
-                        throw new ExecutionError((
-                            "Union type {0} does not provide a \"resolveType\" function" +
-                            "and possible Type \"{1}\" does not provide a \"isTypeOf\" function.  " +
-                            "There is no way to resolve this possible type during execution.")
-                            .ToFormat(union.Name, unionedType.Name));
+                        throw new InvalidOperationException(
+                           $"Union type \"{union.Name}\" does not provide a \"resolveType\" function " +
+                           $"and possible Type \"{unionedType.Name}\" does not provide a \"isTypeOf\" function. " +
+                            "There is no way to resolve this possible type during execution.");
                     }
-                });
+                }
 
-                union.Types.Apply(unionedType =>
+                foreach (var unionedType in union.Types)
                 {
                     AddTypeIfNotRegistered(unionedType, context);
 
@@ -266,21 +377,35 @@ namespace GraphQL.Types
 
                     if (union.ResolveType == null && objType != null && objType.IsTypeOf == null)
                     {
-                        throw new ExecutionError((
-                            "Union type {0} does not provide a \"resolveType\" function" +
-                            "and possible Type \"{1}\" does not provide a \"isTypeOf\" function.  " +
-                            "There is no way to resolve this possible type during execution.")
-                            .ToFormat(union.Name, objType.Name));
+                        throw new InvalidOperationException(
+                           $"Union type \"{union.Name}\" does not provide a \"resolveType\" function " +
+                           $"and possible Type \"{objType.Name}\" does not provide a \"isTypeOf\" function. " +
+                            "There is no way to resolve this possible type during execution.");
                     }
 
                     union.AddPossibleType(objType);
-                });
+                }
             }
         }
 
-        private void HandleField(Type parentType, FieldType field, TypeCollectionContext context)
+        private void HandleField(IComplexGraphType parentType, FieldType field, TypeCollectionContext context, bool applyNameConverter)
         {
-            field.Name = FieldNameConverter.NameFor(field.Name, parentType);
+            // applyNameConverter will be false while processing the three root introspection query fields: __schema, __type, and __typename
+            //
+            // During processing of those three root fields, the NameConverter will be set to the schema's selected NameConverter,
+            //   and the field names must not be processed by the NameConverter
+            //
+            // For other introspection types and fields, the NameConverter will be set to CamelCaseNameConverter at the time this
+            //   code executes, and applyNameConverter will be true
+            //
+            // For any other fields, the NameConverter will be set to the schema's selected NameConverter at the time this code
+            //   executes, and applyNameConverter will be true
+
+            if (applyNameConverter)
+            {
+                field.Name = NameConverter.NameForField(field.Name, parentType);
+                NameValidator.ValidateNameOnSchemaInitialize(field.Name);
+            }
 
             if (field.ResolvedType == null)
             {
@@ -292,17 +417,45 @@ namespace GraphQL.Types
                 AddTypeIfNotRegistered(field.ResolvedType, context);
             }
 
-            field.Arguments?.Apply(arg =>
+            if (field.Arguments == null)
+                return;
+
+            foreach (var arg in field.Arguments)
             {
+                if (applyNameConverter)
+                {
+                    arg.Name = NameConverter.NameForArgument(arg.Name, parentType, field);
+                    NameValidator.ValidateNameOnSchemaInitialize(arg.Name, "argument");
+                }
+
                 if (arg.ResolvedType != null)
                 {
                     AddTypeIfNotRegistered(arg.ResolvedType, context);
-                    return;
+                    continue;
                 }
 
                 AddTypeIfNotRegistered(arg.Type, context);
                 arg.ResolvedType = BuildNamedType(arg.Type, context.ResolveType);
-            });
+            }
+        }
+
+        // https://github.com/graphql-dotnet/graphql-dotnet/pull/1010
+        private void AddTypeWithLoopCheck(IGraphType resolvedType, TypeCollectionContext context, Type namedType)
+        {
+            if (context.InFlightRegisteredTypes.Any(t => t == namedType))
+                throw new InvalidOperationException($@"A loop has been detected while registering schema types.
+There was an attempt to re-register '{namedType.FullName}' with instance of '{resolvedType.GetType().FullName}'.
+Make sure that your ServiceProvider is configured correctly.");
+
+            context.InFlightRegisteredTypes.Push(namedType);
+            try
+            {
+                AddType(resolvedType, context);
+            }
+            finally
+            {
+                context.InFlightRegisteredTypes.Pop();
+            }
         }
 
         private void AddTypeIfNotRegistered(Type type, TypeCollectionContext context)
@@ -311,7 +464,22 @@ namespace GraphQL.Types
             var foundType = this[namedType];
             if (foundType == null)
             {
-                AddType(context.ResolveType(namedType), context);
+                if (namedType == typeof(PageInfoType))
+                {
+                    AddType(new PageInfoType(), context);
+                }
+                else if (namedType.IsGenericType && (namedType.ImplementsGenericType(typeof(EdgeType<>)) || namedType.ImplementsGenericType(typeof(ConnectionType<,>))))
+                {
+                    AddType((IGraphType)Activator.CreateInstance(namedType), context);
+                }
+                else if (_builtInCustomScalars.TryGetValue(namedType, out var builtInCustomScalar))
+                {
+                    AddType(builtInCustomScalar, _context);
+                }
+                else
+                {
+                    AddTypeWithLoopCheck(context.ResolveType(namedType), context, namedType);
+                }
             }
         }
 
@@ -319,49 +487,58 @@ namespace GraphQL.Types
         {
             var namedType = type.GetNamedType();
             var foundType = this[namedType.Name];
-            if(foundType == null)
+            if (foundType == null)
             {
                 AddType(namedType, context);
             }
         }
 
+        // TODO: make private
         public void ApplyTypeReferences()
         {
-            var types = _types.Select(x => x.Value).ToList();
-            types.Apply(ApplyTypeReference);
+            CheckSealed();
+
+            foreach (var type in _types.Values.ToList())
+            {
+                ApplyTypeReference(type);
+            }
         }
 
+        // TODO: make private
         public void ApplyTypeReference(IGraphType type)
         {
-            if (type is IComplexGraphType)
+            CheckSealed();
+
+            if (type is IComplexGraphType complexType)
             {
-                var complexType = (IComplexGraphType)type;
-                complexType.Fields.Apply(field =>
+                foreach (var field in complexType.Fields)
                 {
                     field.ResolvedType = ConvertTypeReference(type, field.ResolvedType);
-                    field.Arguments?.Apply(arg =>
+
+                    if (field.Arguments == null)
+                        continue;
+
+                    foreach (var arg in field.Arguments)
                     {
                         arg.ResolvedType = ConvertTypeReference(type, arg.ResolvedType);
-                    });
-                });
+                    }
+                }
             }
 
-            if (type is IObjectGraphType)
+            if (type is IObjectGraphType objectType)
             {
-                var objectType = (IObjectGraphType) type;
-                var types = objectType
+                objectType.ResolvedInterfaces = objectType
                     .ResolvedInterfaces
                     .Select(i =>
                     {
-                        var interfaceType = ConvertTypeReference(objectType, i) as IInterfaceGraphType;
+                        var interfaceType = (IInterfaceGraphType)ConvertTypeReference(objectType, i);
 
                         if (objectType.IsTypeOf == null && interfaceType.ResolveType == null)
                         {
-                            throw new ExecutionError((
-                                    "Interface type {0} does not provide a \"resolveType\" function " +
-                                    "and possible Type \"{1}\" does not provide a \"isTypeOf\" function.  " +
-                                    "There is no way to resolve this possible type during execution.")
-                                .ToFormat(interfaceType.Name, objectType.Name));
+                            throw new InvalidOperationException(
+                                   $"Interface type \"{interfaceType.Name}\" does not provide a \"resolveType\" function " +
+                                   $"and possible Type \"{objectType.Name}\" does not provide a \"isTypeOf\" function.  " +
+                                    "There is no way to resolve this possible type during execution.");
                         }
 
                         interfaceType.AddPossibleType(objectType);
@@ -369,13 +546,11 @@ namespace GraphQL.Types
                         return interfaceType;
                     })
                     .ToList();
-                objectType.ResolvedInterfaces = types;
             }
 
-            if (type is UnionGraphType)
+            if (type is UnionGraphType union)
             {
-                var union = (UnionGraphType)type;
-                var types = union
+                union.PossibleTypes = union
                     .PossibleTypes
                     .Select(t =>
                     {
@@ -383,45 +558,94 @@ namespace GraphQL.Types
 
                         if (union.ResolveType == null && unionType != null && unionType.IsTypeOf == null)
                         {
-                            throw new ExecutionError((
-                                "Union type {0} does not provide a \"resolveType\" function" +
-                                "and possible Type \"{1}\" does not provide a \"isTypeOf\" function.  " +
-                                "There is no way to resolve this possible type during execution.")
-                                .ToFormat(union.Name, unionType.Name));
+                            throw new InvalidOperationException(
+                               $"Union type \"{union.Name}\" does not provide a \"resolveType\" function " +
+                               $"and possible Type \"{union.Name}\" does not provide a \"isTypeOf\" function. " +
+                                "There is no way to resolve this possible type during execution.");
                         }
 
                         return unionType;
                     })
                     .ToList();
-                union.PossibleTypes = types;
             }
         }
 
         private IGraphType ConvertTypeReference(INamedType parentType, IGraphType type)
         {
-            if (type is NonNullGraphType)
+            if (type is NonNullGraphType nonNull)
             {
-                var nonNull = (NonNullGraphType)type;
                 nonNull.ResolvedType = ConvertTypeReference(parentType, nonNull.ResolvedType);
                 return nonNull;
             }
 
-            if (type is ListGraphType)
+            if (type is ListGraphType list)
             {
-                var list = (ListGraphType)type;
                 list.ResolvedType = ConvertTypeReference(parentType, list.ResolvedType);
                 return list;
             }
 
             var reference = type as GraphQLTypeReference;
-            var result = reference == null ? type : this[reference.TypeName];
-
-            if (reference != null && result == null)
+            if (reference != null)
             {
-                throw new ExecutionError($"Unable to resolve reference to type '{reference.TypeName}' on '{parentType.Name}'");
+                type = this[reference.TypeName];
+                if (type == null)
+                {
+                    type = _builtInScalars.Values.FirstOrDefault(t => t.Name == reference.TypeName) ?? _builtInCustomScalars.Values.FirstOrDefault(t => t.Name == reference.TypeName);
+                    if (type != null)
+                        this[type.Name] = type;
+                }
             }
 
-            return result;
+            if (reference != null && type == null)
+            {
+                throw new InvalidOperationException($"Unable to resolve reference to type '{reference.TypeName}' on '{parentType.Name}'");
+            }
+
+            return type;
         }
+
+        private void SetGraphType(string typeName, IGraphType type)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+            {
+                throw new ArgumentOutOfRangeException(nameof(typeName), "A type name is required to lookup.");
+            }
+
+            if (_types.TryGetValue(typeName, out var existingGraphType))
+            {
+                if (ReferenceEquals(existingGraphType, type))
+                {
+                    // nothing to do
+                }
+                else if (existingGraphType.GetType() == type.GetType())
+                {
+                    _types[typeName] = type; // this case worked before overwriting the old value
+                }
+                else
+                {
+                    throw new InvalidOperationException($@"Unable to register GraphType '{type.GetType().FullName}' with the name '{typeName}';
+the name '{typeName}' is already registered to '{existingGraphType.GetType().FullName}'.");
+                }
+            }
+            else
+            {
+                _types.Add(typeName, type);
+            }
+        }
+
+        /// <summary>
+        /// Returns the <see cref="FieldType"/> instance for the <c>__schema</c> meta-field.
+        /// </summary>
+        public FieldType SchemaMetaFieldType { get; } = new SchemaMetaFieldType();
+
+        /// <summary>
+        /// Returns the <see cref="FieldType"/> instance for the <c>__type</c> meta-field.
+        /// </summary>
+        public FieldType TypeMetaFieldType { get; } = new TypeMetaFieldType();
+
+        /// <summary>
+        /// Returns the <see cref="FieldType"/> instance for the <c>__typename</c> meta-field.
+        /// </summary>
+        public FieldType TypeNameMetaFieldType { get; } = new TypeNameMetaFieldType();
     }
 }

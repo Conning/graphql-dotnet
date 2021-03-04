@@ -1,21 +1,25 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using GraphQL.Language.AST;
+using GraphQL.Validation.Errors;
 
 namespace GraphQL.Validation.Rules
 {
     /// <summary>
-    /// Unique fragment names
+    /// Unique fragment names:
     ///
     /// A GraphQL document is only valid if all defined fragments have unique names.
     /// </summary>
     public class UniqueFragmentNames : IValidationRule
     {
-        public string DuplicateFragmentNameMessage(string fragName)
-        {
-            return $"There can only be one fragment named \"{fragName}\"";
-        }
+        /// <summary>
+        /// Returns a static instance of this validation rule.
+        /// </summary>
+        public static readonly UniqueFragmentNames Instance = new UniqueFragmentNames();
 
-        public INodeVisitor Validate(ValidationContext context)
+        /// <inheritdoc/>
+        /// <exception cref="UniqueFragmentNamesError"/>
+        public Task<INodeVisitor> ValidateAsync(ValidationContext context)
         {
             var knownFragments = new Dictionary<string, FragmentDefinition>();
 
@@ -26,20 +30,14 @@ namespace GraphQL.Validation.Rules
                     var fragmentName = fragmentDefinition.Name;
                     if (knownFragments.ContainsKey(fragmentName))
                     {
-                        var error = new ValidationError(
-                            context.OriginalQuery,
-                            "5.4.1.1",
-                            DuplicateFragmentNameMessage(fragmentName),
-                            knownFragments[fragmentName],
-                            fragmentDefinition);
-                        context.ReportError(error);
+                        context.ReportError(new UniqueFragmentNamesError(context, knownFragments[fragmentName], fragmentDefinition));
                     }
                     else
                     {
                         knownFragments[fragmentName] = fragmentDefinition;
                     }
                 });
-            });
+            }).ToTask();
         }
     }
 }

@@ -1,42 +1,63 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 using GraphQL.Instrumentation;
 using GraphQL.Language.AST;
 using GraphQL.Types;
 
 namespace GraphQL.Execution
 {
-    public class ExecutionContext
+    /// <summary>
+    /// Provides a mutable instance of <see cref="IExecutionContext"/>.
+    /// </summary>
+    public class ExecutionContext : IExecutionContext
     {
-        public ExecutionContext()
-        {
-            Fragments = new Fragments();
-            Errors = new ExecutionErrors();
-        }
-
+        /// <inheritdoc/>
         public Document Document { get; set; }
 
+        /// <inheritdoc/>
         public ISchema Schema { get; set; }
 
+        /// <inheritdoc/>
         public object RootValue { get; set; }
 
-        public object UserContext { get; set; }
+        /// <inheritdoc/>
+        public IDictionary<string, object> UserContext { get; set; }
 
+        /// <inheritdoc/>
         public Operation Operation { get; set; }
 
-        public Fragments Fragments { get; set; }
+        /// <inheritdoc/>
+        public Fragments Fragments { get; set; } = new Fragments();
 
+        /// <inheritdoc/>
         public Variables Variables { get; set; }
 
-        public ExecutionErrors Errors { get; set; }
+        /// <inheritdoc/>
+        public ExecutionErrors Errors { get; set; } = new ExecutionErrors();
 
+        /// <inheritdoc/>
         public CancellationToken CancellationToken { get; set; }
 
+        /// <inheritdoc/>
         public Metrics Metrics { get; set; }
 
-        public IEnumerable<IDocumentExecutionListener> Listeners { get; set; } = Enumerable.Empty<IDocumentExecutionListener>();
+        /// <inheritdoc/>
+        public List<IDocumentExecutionListener> Listeners { get; set; }
+
+        /// <inheritdoc/>
+        public bool ThrowOnUnhandledException { get; set; }
+
+        /// <inheritdoc/>
+        public Action<UnhandledExceptionContext> UnhandledExceptionDelegate { get; set; }
+
+        /// <inheritdoc/>
+        public int? MaxParallelExecutionCount { get; set; }
+
+        /// <inheritdoc/>
+        public Dictionary<string, object> Extensions { get; set; } = new Dictionary<string, object>();
+
+        /// <inheritdoc/>
+        public IServiceProvider RequestServices { get; set; }
     }
 }

@@ -1,5 +1,6 @@
-﻿using GraphQL.Http;
-using GraphQL.Introspection;
+using System;
+using System.Threading.Tasks;
+using GraphQL.Conversion;
 using GraphQL.Types;
 using Shouldly;
 using Xunit;
@@ -8,32 +9,92 @@ namespace GraphQL.Tests.Introspection
 {
     public class SchemaIntrospectionTests
     {
-        [Fact]
-        public void validate_core_schema()
+        [Theory]
+        [ClassData(typeof(DocumentWritersTestData))]
+        public async Task validate_core_schema(IDocumentWriter documentWriter)
         {
             var documentExecuter = new DocumentExecuter();
-            var executionResult = documentExecuter.ExecuteAsync(_ =>
+            var executionResult = await documentExecuter.ExecuteAsync(_ =>
             {
-                _.Schema = new Schema();
+                _.Schema = new Schema
+                {
+                    Query = new TestQuery()
+                };
                 _.Query = SchemaIntrospection.IntrospectionQuery;
-            }).GetAwaiter().GetResult();
+            });
 
-            var json = new DocumentWriter(true).Write(executionResult.Data);
+            var json = await documentWriter.WriteToStringAsync(executionResult);
 
             ShouldBe(json, IntrospectionResult.Data);
         }
 
-        [Fact]
-        public void validate_non_null_schema()
+        [Theory]
+        [ClassData(typeof(DocumentWritersTestData))]
+        public async Task validate_core_schema_pascal_case(IDocumentWriter documentWriter)
         {
             var documentExecuter = new DocumentExecuter();
-            var executionResult = documentExecuter.ExecuteAsync(_ =>
+            var executionResult = await documentExecuter.ExecuteAsync(_ =>
+            {
+                _.Schema = new Schema
+                {
+                    Query = new TestQuery(),
+                };
+                _.NameConverter = PascalCaseNameConverter.Instance;
+                _.Query = SchemaIntrospection.IntrospectionQuery;
+            });
+
+            var json = await documentWriter.WriteToStringAsync(executionResult);
+
+            ShouldBe(json, IntrospectionResult.Data);
+        }
+
+        [Theory]
+        [ClassData(typeof(DocumentWritersTestData))]
+        public async Task validate_core_schema_doesnt_use_nameconverter(IDocumentWriter documentWriter)
+        {
+            var documentExecuter = new DocumentExecuter();
+            var executionResult = await documentExecuter.ExecuteAsync(_ =>
+            {
+                _.Schema = new Schema
+                {
+                    Query = new TestQuery(),
+                };
+                _.NameConverter = new TestNameConverter();
+                _.Query = SchemaIntrospection.IntrospectionQuery;
+            });
+
+            var json = await documentWriter.WriteToStringAsync(executionResult);
+
+            ShouldBe(json, IntrospectionResult.Data);
+        }
+
+        public class TestNameConverter : INameConverter
+        {
+            public string NameForArgument(string argumentName, IComplexGraphType parentGraphType, FieldType field) => throw new Exception();
+
+            public string NameForField(string fieldName, IComplexGraphType parentGraphType) => throw new Exception();
+        }
+
+        public class TestQuery : ObjectGraphType
+        {
+            public TestQuery()
+            {
+                Name = "TestQuery";
+            }
+        }
+
+        [Theory]
+        [ClassData(typeof(DocumentWritersTestData))]
+        public async Task validate_non_null_schema(IDocumentWriter documentWriter)
+        {
+            var documentExecuter = new DocumentExecuter();
+            var executionResult = await documentExecuter.ExecuteAsync(_ =>
             {
                 _.Schema = new TestSchema();
                 _.Query = InputObjectBugQuery;
-            }).GetAwaiter().GetResult();
+            });
 
-            var json = new DocumentWriter(true).Write(executionResult.Data);
+            var json = await documentWriter.WriteToStringAsync(executionResult);
             executionResult.Errors.ShouldBeNull();
 
             ShouldBe(json, InputObjectBugResult);
@@ -64,7 +125,7 @@ query test {
     }
 }";
 
-        public static readonly string InputObjectBugResult = "{\r\n  \"__type\": {\r\n    \"inputFields\": [\r\n      {\r\n        \"type\": {\r\n          \"name\": \"String\",\r\n          \"description\": null,\r\n          \"ofType\": null\r\n        }\r\n      }\r\n    ]\r\n  }\r\n}";
+        public static readonly string InputObjectBugResult = "{\r\n \"data\": {\r\n  \"__type\": {\r\n    \"inputFields\": [\r\n      {\r\n        \"type\": {\r\n          \"name\": \"String\",\r\n          \"description\": null,\r\n          \"ofType\": null\r\n        }\r\n      }\r\n    ]\r\n  }\r\n }\r\n}";
 
         public class SomeInputType : InputObjectGraphType
         {

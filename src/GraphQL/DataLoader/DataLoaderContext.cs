@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 
 namespace GraphQL.DataLoader
 {
@@ -10,7 +9,6 @@ namespace GraphQL.DataLoader
     public class DataLoaderContext
     {
         private readonly Dictionary<string, IDataLoader> _loaders = new Dictionary<string, IDataLoader>();
-        private readonly Queue<IDataLoader> _queue = new Queue<IDataLoader>();
 
         /// <summary>
         /// Add a new data loader if one does not already exist with the provided key
@@ -37,27 +35,10 @@ namespace GraphQL.DataLoader
                     loader = dataLoaderFactory();
 
                     _loaders.Add(loaderKey, loader);
-                    _queue.Enqueue(loader);
                 }
             }
 
             return (TDataLoader)loader;
-        }
-
-        /// <summary>
-        /// Dispatch all registered data loaders
-        /// </summary>
-        /// <param name="cancellationToken">Optional <seealso cref="CancellationToken"/> to pass to fetch delegate</param>
-        public void DispatchAll(CancellationToken cancellationToken = default(CancellationToken))
-        {
-            lock (_loaders)
-            {
-                // We don't want to pull any loaders off the queue because they may get more work later
-                foreach (var loader in _queue)
-                {
-                    loader.Dispatch(cancellationToken);
-                }
-            }
         }
     }
 }

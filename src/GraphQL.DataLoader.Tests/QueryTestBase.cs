@@ -1,21 +1,22 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using GraphQL.DataLoader;
+using System.Threading.Tasks;
 using GraphQL.DataLoader.Tests.Stores;
 using GraphQL.DataLoader.Tests.Types;
 using GraphQL.Execution;
-using GraphQL.Http;
+using GraphQL.SystemTextJson;
 using GraphQL.Types;
 using GraphQLParser.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
-using Newtonsoft.Json.Linq;
+using Moq;
 using Nito.AsyncEx;
 using Shouldly;
 
 namespace GraphQL.DataLoader.Tests
 {
-    public abstract class QueryTestBase
+    public abstract class QueryTestBase : DataLoaderTestBase
     {
         private readonly IDocumentExecuter executer = new DocumentExecuter();
         private readonly IDocumentWriter writer = new DocumentWriter(indent: true);
@@ -33,26 +34,37 @@ namespace GraphQL.DataLoader.Tests
         protected virtual void ConfigureServices(ServiceCollection services)
         {
             services.AddSingleton<DataLoaderTestSchema>();
+            services.AddSingleton<SubscriptionType>();
             services.AddSingleton<QueryType>();
             services.AddSingleton<OrderType>();
             services.AddSingleton<UserType>();
-            services.AddSingleton<OrdersStore>();
-            services.AddSingleton<UsersStore>();
+            services.AddSingleton<OrderItemType>();
+            services.AddSingleton<ProductType>();
             services.AddSingleton<IDataLoaderContextAccessor, DataLoaderContextAccessor>();
-            services.AddTransient<DataLoaderDocumentListener>();
+            services.AddSingleton<IDocumentExecutionListener, DataLoaderDocumentListener>();
+
+            var ordersMock = new Mock<IOrdersStore>();
+            var usersMock = new Mock<IUsersStore>();
+            var productsMock = new Mock<IProductsStore>();
+
+            services.AddSingleton(ordersMock);
+            services.AddSingleton(ordersMock.Object);
+            services.AddSingleton(usersMock);
+            services.AddSingleton(usersMock.Object);
+            services.AddSingleton(productsMock);
+            services.AddSingleton(productsMock.Object);
         }
 
         public ExecutionResult AssertQuerySuccess<TSchema>(
             string query,
             string expected,
             Inputs inputs = null,
-            object userContext = null,
-            CancellationToken cancellationToken = default(CancellationToken),
-            Type listenerType = null)
+            IDictionary<string, object> userContext = null,
+            CancellationToken cancellationToken = default)
             where TSchema : ISchema
         {
             var queryResult = CreateQueryResult(expected);
-            return AssertQuery<TSchema>(query, queryResult, inputs, userContext, cancellationToken, listenerType);
+            return AssertQuery<TSchema>(query, queryResult, inputs, userContext, cancellationToken);
         }
 
         public ExecutionResult AssertQuerySuccess<TSchema>(Action<ExecutionOptions> options, string expected)
@@ -68,15 +80,14 @@ namespace GraphQL.DataLoader.Tests
             var schema = Services.GetRequiredService<TSchema>();
 
             // Run the executer within an async context to make sure there are no deadlock issues
-            var runResult = AsyncContext.Run(() => executer.ExecuteAsync((opts) =>
+            var runResult = AsyncContext.Run(() => executer.ExecuteAsync(opts =>
             {
                 options(opts);
                 opts.Schema = schema;
-                opts.ExposeExceptions = true;
             }));
 
-            var writtenResult = writer.Write(runResult);
-            var expectedResult = writer.Write(expectedExecutionResult);
+            var writtenResult = AsyncContext.Run(() => writer.WriteToStringAsync(runResult));
+            var expectedResult = AsyncContext.Run(() => writer.WriteToStringAsync(expectedExecutionResult));
 
             string additionalInfo = null;
 
@@ -92,38 +103,50 @@ namespace GraphQL.DataLoader.Tests
             return runResult;
         }
 
+        public Task<ExecutionResult> ExecuteQueryAsync<TSchema>(string query)
+            where TSchema : ISchema
+        {
+            var schema = Services.GetRequiredService<TSchema>();
+
+            // Run the executer within an async context to make sure there are no deadlock issues
+            return executer.ExecuteAsync(opts =>
+            {
+                opts.Schema = schema;
+                opts.Query = query;
+                foreach (var listener in Services.GetRequiredService<IEnumerable<IDocumentExecutionListener>>())
+                {
+                    opts.Listeners.Add(listener);
+                }
+            });
+        }
+
         public ExecutionResult AssertQuery<TSchema>(
             string query,
             ExecutionResult expectedExecutionResult,
             Inputs inputs = null,
-            object userContext = null,
-            CancellationToken cancellationToken = default(CancellationToken),
-            Type listenerType = null)
+            IDictionary<string, object> userContext = null,
+            CancellationToken cancellationToken = default)
             where TSchema : ISchema
         {
-            return AssertQuery<TSchema>(_ =>
-            {
-                _.Query = query;
-                _.Inputs = inputs;
-                _.UserContext = userContext;
-                _.CancellationToken = cancellationToken;
-
-                if (listenerType != null)
+            return AssertQuery<TSchema>(
+                opts =>
                 {
-                    var listener = (IDocumentExecutionListener)Services.GetRequiredService(listenerType);
-                    _.Listeners.Add(listener);
-                }
+                    opts.Query = query;
+                    opts.Inputs = inputs;
+                    opts.UserContext = userContext;
+                    opts.CancellationToken = cancellationToken;
 
-            }, expectedExecutionResult);
+                    foreach (var listener in Services.GetRequiredService<IEnumerable<IDocumentExecutionListener>>())
+                    {
+                        opts.Listeners.Add(listener);
+                    }
+                },
+                expectedExecutionResult);
         }
 
         public ExecutionResult CreateQueryResult(string result)
         {
-            object expected = null;
-            if (!string.IsNullOrWhiteSpace(result))
-            {
-                expected = JObject.Parse(result);
-            }
+            object expected = string.IsNullOrWhiteSpace(result) ? null : result.ToDictionary();
             return new ExecutionResult { Data = expected };
         }
     }

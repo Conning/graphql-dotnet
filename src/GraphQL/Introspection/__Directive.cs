@@ -1,14 +1,20 @@
-﻿using System;
-using GraphQL.Types;
+using System;
 using System.Linq;
+using GraphQL.Types;
 
 namespace GraphQL.Introspection
 {
+    /// <summary>
+    /// The <c>__Directive</c> introspection type represents a directive that a server supports.
+    /// </summary>
     public class __Directive : ObjectGraphType<DirectiveGraphType>
     {
+        /// <summary>
+        /// Initializes a new instance of the <c>__Directive</c> introspection type.
+        /// </summary>
         public __Directive()
         {
-            Name = "__Directive";
+            Name = nameof(__Directive);
             Description =
                 "A Directive provides a way to describe alternate runtime execution and " +
                 "type validation behavior in a GraphQL document." +
@@ -18,7 +24,7 @@ namespace GraphQL.Introspection
                 "describing additional information to the executor.";
 
             Field(f => f.Name);
-            Field(f => f.Description, nullable: true);
+            Field(f => f.Description, nullable: true).Description(null);
 
             Field<NonNullGraphType<ListGraphType<NonNullGraphType<__DirectiveLocation>>>>("locations");
             Field<NonNullGraphType<ListGraphType<NonNullGraphType<__InputValue>>>>("args",
@@ -44,33 +50,20 @@ namespace GraphQL.Introspection
         }
     }
 
-    public class __DirectiveLocation : EnumerationGraphType
+    /// <summary>
+    /// An enumeration representing a location that a directive may be placed.
+    /// </summary>
+    public class __DirectiveLocation : EnumerationGraphType<DirectiveLocation>
     {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="__DirectiveLocation"/> graph type.
+        /// </summary>
         public __DirectiveLocation()
         {
-            Name = "__DirectiveLocation";
+            SetName(nameof(__DirectiveLocation), validate: false);
             Description =
                 "A Directive can be adjacent to many parts of the GraphQL language, a " +
                 "__DirectiveLocation describes one such possible adjacencies.";
-
-            AddValue("QUERY", "Location adjacent to a query operation.", DirectiveLocation.Query);
-            AddValue("MUTATION", "Location adjacent to a mutation operation.", DirectiveLocation.Mutation);
-            AddValue("SUBSCRIPTION", "Location adjacent to a subscription operation.", DirectiveLocation.Subscription);
-            AddValue("FIELD", "Location ajdacent to a field.", DirectiveLocation.Field);
-            AddValue("FRAGMENT_DEFINITION", "Location adjacent to a fragment definition.", DirectiveLocation.FragmentDefinition);
-            AddValue("FRAGMENT_SPREAD", "Location adjacent to a fragment spread.", DirectiveLocation.FragmentSpread);
-            AddValue("INLINE_FRAGMENT", "Location adjacent to an inline fragment.", DirectiveLocation.InlineFragment);
-            AddValue("SCHEMA", "Location adjacent to a schema definition.", DirectiveLocation.Schema);
-            AddValue("SCALAR", "Location adjacent to a scalar definition.", DirectiveLocation.Scalar);
-            AddValue("OBJECT", "Location adjacent to an object type definition.", DirectiveLocation.Object);
-            AddValue("FIELD_DEFINITION", "Location adjacent to a field definition.", DirectiveLocation.FieldDefinition);
-            AddValue("ARGUMENT_DEFINITION", "Location adjacent to an argument defintion.", DirectiveLocation.ArgumentDefinition);
-            AddValue("INTERFACE", "Location adjacent to an interface definition.", DirectiveLocation.Interface);
-            AddValue("UNION", "Location adjacent to a union definition.", DirectiveLocation.Union);
-            AddValue("ENUM", "Location adjacent to an enum definition", DirectiveLocation.Enum);
-            AddValue("ENUM_VALUE", "Location adjacent to an enum value definition", DirectiveLocation.EnumValue);
-            AddValue("INPUT_OBJECT", "Location adjacent to an input object type defintion.", DirectiveLocation.InputObject);
-            AddValue("INPUT_FIELD_DEFINITION", "Location adjacent to an input object field definition.", DirectiveLocation.InputFieldDefinition);
         }
     }
 }

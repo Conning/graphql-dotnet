@@ -1,3 +1,4 @@
+using GraphQL.StarWars.Extensions;
 using GraphQL.Types;
 
 namespace GraphQL.StarWars.Types
@@ -14,8 +15,14 @@ namespace GraphQL.StarWars.Types
 
             Field<ListGraphType<CharacterInterface>>(
                 "friends",
-                resolve: context => data.GetFriends(context.Source)
-            );
+                resolve: context => data.GetFriends(context.Source));
+
+            Connection<CharacterInterface>()
+                .Name("friendsConnection")
+                .Description("A list of a character's friends.")
+                .Bidirectional()
+                .Resolve(context => context.GetPagedResults<Droid, StarWarsCharacter>(data, context.Source.Friends));
+
             Field<ListGraphType<EpisodeEnum>>("appearsIn", "Which movie they appear in.");
             Field(d => d.PrimaryFunction, nullable: true).Description("The primary function of the droid.");
 

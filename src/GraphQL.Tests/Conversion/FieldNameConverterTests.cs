@@ -1,5 +1,3 @@
-using System.Linq;
-using GraphQL;
 using GraphQL.Conversion;
 using GraphQL.Tests.Execution;
 using GraphQL.Types;
@@ -8,23 +6,24 @@ using Xunit;
 
 namespace GraphQL.Tests.Conversion
 {
-    public class FieldNameConverterTests : BasicQueryTestBase
+    public class NameConverterTests : BasicQueryTestBase
     {
-        public ISchema build_schema(IFieldNameConverter converter = null)
+        public ISchema build_schema(INameConverter converter = null, string argument = "Id")
         {
-            var schema = new Schema();
-            schema.FieldNameConverter = converter ?? new CamelCaseFieldNameConverter();
+            var schema = new Schema
+            {
+                NameConverter = converter ?? CamelCaseNameConverter.Instance
+            };
 
-            var person = new ObjectGraphType();
-            person.Name = "Person";
+            var person = new ObjectGraphType { Name = "Person" };
             person.Field("Name", new StringGraphType());
 
-            var query = new ObjectGraphType();
-            query.Name = "Query";
-            query.Field("PeRsoN", person, resolve: ctx =>
-            {
-                return new Person{ Name = "Quinn" };
-            });
+            var query = new ObjectGraphType { Name = "Query" };
+            query.Field(
+                "PeRsoN",
+                person,
+                arguments: new QueryArguments(new QueryArgument<StringGraphType> { Name = argument }),
+                resolve: ctx => new Person { Name = "Quinn" });
 
             schema.Query = query;
             return schema;
@@ -38,7 +37,7 @@ namespace GraphQL.Tests.Conversion
                 _.Schema = build_schema();
                 _.Query = "{ peRsoN { name } }";
             },
-            "{ peRsoN: { name: \"Quinn\" } }");
+            @"{ ""peRsoN"": { ""name"": ""Quinn"" } }");
         }
 
         [Fact]
@@ -49,34 +48,56 @@ namespace GraphQL.Tests.Conversion
                 _.Schema = build_schema();
                 _.Query = "{ peRsoN { Na: name } }";
             },
-            "{ peRsoN: { Na: \"Quinn\" } }");
+            @"{ ""peRsoN"": { ""Na"": ""Quinn"" } }");
         }
 
         [Fact]
         public void pascal_case_ignores_aliases()
         {
-            var converter = new PascalCaseFieldNameConverter();
+            var converter = new PascalCaseNameConverter();
 
             AssertQuerySuccess(_ =>
             {
                 _.Schema = build_schema(converter);
                 _.Query = "{ PeRsoN { naME: Name } }";
-                _.FieldNameConverter = converter;
+                _.NameConverter = converter;
             },
-            "{ PeRsoN: { naME: \"Quinn\" } }");
+            @"{ ""PeRsoN"": { ""naME"": ""Quinn"" } }");
         }
 
         [Fact]
         public void default_case_ignores_aliases()
         {
-            var converter = new DefaultFieldNameConverter();
+            var converter = new DefaultNameConverter();
             AssertQuerySuccess(_ =>
             {
                 _.Schema = build_schema(converter);
                 _.Query = "{ PeRsoN { naME: Name } }";
-                _.FieldNameConverter = converter;
+                _.NameConverter = converter;
             },
-            "{ PeRsoN: { naME: \"Quinn\" } }");
+            @"{ ""PeRsoN"": { ""naME"": ""Quinn"" } }");
+        }
+
+        [Fact]
+        public void arguments_default_to_camel_case()
+        {
+            var schema = build_schema();
+            schema.Initialize();
+
+            var query = schema.FindType("Query") as IObjectGraphType;
+            var field = query.GetField("peRsoN");
+            field.Arguments.Find("id").ShouldNotBeNull();
+        }
+
+        [Fact]
+        public void arguments_can_use_pascal_case()
+        {
+            var schema = build_schema(new PascalCaseNameConverter(), "iD");
+            schema.Initialize();
+
+            var query = schema.FindType("Query") as IObjectGraphType;
+            var field = query.GetField("PeRsoN");
+            field.Arguments.Find("ID").ShouldNotBeNull();
         }
     }
 }

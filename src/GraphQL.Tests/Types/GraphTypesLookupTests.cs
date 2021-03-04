@@ -1,8 +1,6 @@
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using GraphQL.Types;
-using Shouldly;
 using Xunit;
 
 namespace GraphQL.Tests.Types
@@ -18,11 +16,12 @@ namespace GraphQL.Tests.Types
         [Fact]
         public void is_thread_safe()
         {
-            Task.Run(() => AddAType());
+            Task.Run(AddAType);
             var modified = false;
             foreach (var t in _lookup.All())
             {
-                if (modified) continue;
+                if (modified)
+                    continue;
                 _inIteration.Set();
                 _lookupModified.WaitOne();
                 modified = true;

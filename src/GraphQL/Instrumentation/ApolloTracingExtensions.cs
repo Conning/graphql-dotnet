@@ -1,56 +1,65 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using GraphQL;
-using GraphQL.Language.AST;
 
 namespace GraphQL.Instrumentation
 {
+    /// <summary>
+    /// Methods to add Apollo tracing metrics to an <see cref="ExecutionResult"/> instance.
+    /// </summary>
     public static class ApolloTracingExtensions
     {
+        /// <summary>
+        /// Adds Apollo tracing metrics to an <see cref="ExecutionResult"/> instance,
+        /// stored within <see cref="ExecutionResult.Extensions"/>["tracing"].
+        /// Requires that the GraphQL document was executed with metrics enabled;
+        /// see <see cref="ExecutionOptions.EnableMetrics"/>. With <see cref="InstrumentFieldsMiddleware"/>
+        /// installed, also includes metrics from field resolvers.
+        /// </summary>
+        /// <param name="result">An <see cref="ExecutionResult"/> instance.</param>
+        /// <param name="start">The UTC date and time that the GraphQL document began execution.</param>
         public static void EnrichWithApolloTracing(this ExecutionResult result, DateTime start)
         {
             var perf = result?.Perf;
-            if (perf == null)
-            {
-                return;
-            }
-
-            var trace = CreateTrace(result.Operation, perf, start);
-            if (result.Extensions == null)
-            {
-                result.Extensions = new Dictionary<string, object>();
-            }
-            result.Extensions["tracing"] = trace;
+            if (perf != null)
+                (result.Extensions ??= new Dictionary<string, object>())["tracing"] = CreateTrace(perf, start);
         }
 
-        public static ApolloTrace CreateTrace(
-            Operation operation,
-            PerfRecord[] perf,
-            DateTime start)
+        /// <summary>
+        /// Initializes an <see cref="ApolloTrace"/> instance and populates it with performance
+        /// metrics gathered during the GraphQL document execution.
+        /// </summary>
+        /// <param name="perf">A list of performance records; typically as returned from <see cref="Metrics.Finish"/>.</param>
+        /// <param name="start">The UTC date and time that the GraphQL document began execution.</param>
+        public static ApolloTrace CreateTrace(PerfRecord[] perf, DateTime start)
         {
-            var operationStat = perf.Single(x => x.Category == "operation");
-            var documentStats = perf.Where(x => x.Category == "document");
-            var fieldStats = perf.Where(x => x.Category == "field");
-
+            var operationStat = perf.Single(x => x.Category == "operation"); // always exists
             var trace = new ApolloTrace(start, operationStat.Duration);
 
-            var parsingStat = documentStats.Single(x => x.Subject == "Building document");
-            trace.Parsing.StartOffset = ApolloTrace.ConvertTime(parsingStat.Start);
-            trace.Parsing.Duration = ApolloTrace.ConvertTime(parsingStat.Duration);
+            var documentStats = perf.Where(x => x.Category == "document");
 
-            var validationStat = documentStats.Single(x => x.Subject == "Validating document");
-            trace.Validation.StartOffset = ApolloTrace.ConvertTime(parsingStat.Start);
-            trace.Validation.Duration = ApolloTrace.ConvertTime(parsingStat.Duration);
+            var parsingStat = documentStats.FirstOrDefault(x => x.Subject == "Building document");
+            if (parsingStat != null) // can be null if exception occurred
+            {
+                trace.Parsing.StartOffset = ApolloTrace.ConvertTime(parsingStat.Start);
+                trace.Parsing.Duration = ApolloTrace.ConvertTime(parsingStat.Duration);
+            }
 
+            var validationStat = documentStats.FirstOrDefault(x => x.Subject == "Validating document");
+            if (validationStat != null) // can be null if exception occurred
+            {
+                trace.Validation.StartOffset = ApolloTrace.ConvertTime(validationStat.Start);
+                trace.Validation.Duration = ApolloTrace.ConvertTime(validationStat.Duration);
+            }
+
+            var fieldStats = perf.Where(x => x.Category == "field");
             foreach (var fieldStat in fieldStats)
             {
-                var stringPath = fieldStat.MetaField<IEnumerable<string>>("path");
                 trace.Execution.Resolvers.Add(
                     new ApolloTrace.ResolverTrace
                     {
                         FieldName = fieldStat.MetaField<string>("fieldName"),
-                        Path = ConvertPath(stringPath).ToList(),
+                        Path = fieldStat.MetaField<IEnumerable<object>>("path").ToList(),
                         ParentType = fieldStat.MetaField<string>("typeName"),
                         ReturnType = fieldStat.MetaField<string>("returnTypeName"),
                         StartOffset = ApolloTrace.ConvertTime(fieldStat.Start),
@@ -59,21 +68,6 @@ namespace GraphQL.Instrumentation
             }
 
             return trace;
-        }
-
-        private static IEnumerable<object> ConvertPath(IEnumerable<string> stringPath)
-        {
-             foreach (var step in stringPath)
-            {
-                if (int.TryParse(step, out int arrayIndex))
-                {
-                    yield return arrayIndex;
-                }
-                else
-                {
-                    yield return step;
-                }
-            }
         }
     }
 }

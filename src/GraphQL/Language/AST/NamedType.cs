@@ -1,38 +1,52 @@
-﻿namespace GraphQL.Language.AST
+using System;
+
+namespace GraphQL.Language.AST
 {
+    /// <summary>
+    /// Represents a named type node within a document.
+    /// </summary>
     public class NamedType : AbstractNode, IType
     {
+        /// <summary>
+        /// Initializes a new named type node containing the specified <see cref="NameNode"/>.
+        /// </summary>
         public NamedType(NameNode node)
-            : this(node.Name)
         {
             NameNode = node;
         }
 
-        public NamedType(string name)
-        {
-            Name = name;
-        }
+        /// <summary>
+        /// Returns the name of the named type node.
+        /// </summary>
+        public string Name => NameNode.Name;
 
-        public string Name { get; }
+        /// <summary>
+        /// Returns the <see cref="NameNode"/> containing the name of the type.
+        /// </summary>
         public NameNode NameNode { get; }
 
-        public override string ToString()
-        {
-            return "NamedType{{name={0}}}".ToFormat(Name);
-        }
+        /// <inheritdoc/>
+        public override string ToString() => $"NamedType{{name={Name}}}";
 
+        /// <summary>
+        /// Compares this instance to another instance by comparing the name of the type.
+        /// </summary>
         protected bool Equals(NamedType other)
         {
-            return string.Equals(Name, other.Name);
+            return string.Equals(Name, other.Name, StringComparison.InvariantCulture);
         }
 
+        /// <inheritdoc/>
         public override bool IsEqualTo(INode obj)
         {
-            if (ReferenceEquals(null, obj)) return false;
-            if (ReferenceEquals(this, obj)) return true;
-            if (obj.GetType() != this.GetType()) return false;
+            if (obj is null)
+                return false;
+            if (ReferenceEquals(this, obj))
+                return true;
+            if (obj.GetType() != GetType())
+                return false;
 
-            return Equals((NamedType) obj);
+            return Equals((NamedType)obj);
         }
     }
 }

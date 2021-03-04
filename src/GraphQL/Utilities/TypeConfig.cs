@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Threading.Tasks;
 using GraphQL.Reflection;
 using GraphQL.Resolvers;
 using GraphQL.Types;
@@ -25,9 +26,6 @@ namespace GraphQL.Utilities
             {
                 _type = value;
                 ApplyMetadata(value);
-
-                if (IsTypeOfFunc == null)
-                    IsTypeOfFunc = obj => obj?.GetType().IsAssignableFrom(_type) ?? false;
             }
         }
 
@@ -39,23 +37,42 @@ namespace GraphQL.Utilities
 
         public void IsTypeOf<T>()
         {
-            IsTypeOfFunc = obj => obj?.GetType() == typeof(T);
+            IsTypeOfFunc = obj => obj?.GetType().IsAssignableFrom(typeof(T)) ?? false;
         }
 
-        public FieldConfig FieldFor(string field, IDependencyResolver dependencyResolver)
+        public FieldConfig FieldFor(string field, IServiceProvider serviceProvider)
         {
             var config = _fields[field];
-            config.Accessor = Type.ToAccessor(field);
+            config.ResolverAccessor = Type.ToAccessor(field, ResolverType.Resolver);
 
-            if(Type != null)
+            if (Type != null && config.ResolverAccessor != null)
             {
-                if(config.Accessor == null)
-                {
-                    throw new InvalidOperationException($"Expected to find method or property {field} on {Type.Name} but could not.");
-                }
+                config.Resolver = new AccessorFieldResolver(config.ResolverAccessor, serviceProvider);
+                config.ResolverAccessor.GetAttributes<GraphQLAttribute>()?.Apply(a => a.Modify(config));
+            }
 
-                config.Resolver = new AccessorFieldResolver(config.Accessor, dependencyResolver);
-                config.Accessor.GetAttributes<GraphQLAttribute>()?.Apply(a => a.Modify(config));
+            return config;
+        }
+
+        public FieldConfig SubscriptionFieldFor(string field, IServiceProvider serviceProvider)
+        {
+            var config = _fields[field];
+            config.ResolverAccessor = Type.ToAccessor(field, ResolverType.Resolver);
+            config.SubscriberAccessor = Type.ToAccessor(field, ResolverType.Subscriber);
+
+            if (Type != null && config.ResolverAccessor != null && config.SubscriberAccessor != null)
+            {
+                config.Resolver = new AccessorFieldResolver(config.ResolverAccessor, serviceProvider);
+                config.ResolverAccessor.GetAttributes<GraphQLAttribute>()?.Apply(a => a.Modify(config));
+
+                if (config.SubscriberAccessor.MethodInfo.ReturnType.GetGenericTypeDefinition() == typeof(Task<>))
+                {
+                    config.AsyncSubscriber = new AsyncEventStreamResolver(config.SubscriberAccessor, serviceProvider);
+                }
+                else
+                {
+                    config.Subscriber = new EventStreamResolver(config.SubscriberAccessor, serviceProvider);
+                }
             }
 
             return config;
@@ -63,8 +80,15 @@ namespace GraphQL.Utilities
 
         private void ApplyMetadata(Type type)
         {
-            var attributes = type?.GetTypeInfo().GetCustomAttributes<GraphQLAttribute>();
-            attributes?.Apply(a => a.Modify(this));
+            var attributes = type?.GetCustomAttributes<GraphQLAttribute>();
+
+            if (attributes == null)
+                return;
+
+            foreach (var a in attributes)
+            {
+                a.Modify(this);
+            }
         }
     }
 }

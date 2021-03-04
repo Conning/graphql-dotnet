@@ -1,7 +1,10 @@
-﻿using System.Threading.Tasks;
-using GraphQL.Types;
+using System.Threading.Tasks;
 
 namespace GraphQL.Instrumentation
 {
-    public delegate Task<object> FieldMiddlewareDelegate(ResolveFieldContext context);
+    /// <summary>
+    /// Encapsulates a method that has a parameter of type <see cref="IResolveFieldContext"/> and
+    /// asynchronously returns an object.
+    /// </summary>
+    public delegate Task<object> FieldMiddlewareDelegate(IResolveFieldContext context);
 }

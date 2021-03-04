@@ -4,6 +4,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using GraphQL.DataLoader.Tests.Models;
+using GraphQL.DataLoader.Tests.Stores;
+using GraphQL.Types;
+using Moq;
 using Shouldly;
 using Xunit;
 
@@ -11,36 +14,31 @@ namespace GraphQL.DataLoader.Tests
 {
     public class SimpleDataLoaderTests : DataLoaderTestBase
     {
-        public SimpleDataLoaderTests()
-        {
-            Users.AddUsers(
-                new User
-                {
-                    UserId = 1
-                },
-                new User
-                {
-                    UserId = 2
-                }
-            );
-        }
-
         [Fact]
         public async Task Result_Is_Cached()
         {
-            var loader = new SimpleDataLoader<IEnumerable<User>>((ct) => Users.GetAllUsersAsync(ct, 20));
+            var mock = new Mock<IUsersStore>();
+            var users = Fake.Users.Generate(2);
 
-            var task = loader.LoadAsync();
+            mock.Setup(store => store.GetAllUsersAsync(default))
+                .ReturnsAsync(users, delay: TimeSpan.FromMilliseconds(20));
 
-            loader.Dispatch();
+            var usersStore = mock.Object;
 
-            var result1 = await task;
+            var loader = new SimpleDataLoader<IEnumerable<User>>(usersStore.GetAllUsersAsync);
+
+            var delayResult = loader.LoadAsync();
+
+            await loader.DispatchAsync();
+
+            var result1 = await delayResult.GetResultAsync();
 
             result1.ShouldNotBeNull();
             result1.Count().ShouldBe(2);
 
             // Load again. Result should be cached
-            var task2 = loader.LoadAsync();
+            var delayResult2 = loader.LoadAsync();
+            var task2 = delayResult2.GetResultAsync();
 
             task2.Status.ShouldBe(TaskStatus.RanToCompletion);
 
@@ -49,101 +47,115 @@ namespace GraphQL.DataLoader.Tests
             // Results should be the same instance
             result2.ShouldBeSameAs(result1);
 
-            Users.GetAllUsersCalledCount.ShouldBe(1);
+            mock.Verify(x => x.GetAllUsersAsync(default), Times.Once);
         }
 
         [Fact]
         public async Task Operation_Can_Be_Cancelled()
         {
             var cts = new CancellationTokenSource();
-            var loader = new SimpleDataLoader<IEnumerable<User>>((ct) => Users.GetAllUsersAsync(ct, 20));
 
-            var task = loader.LoadAsync();
+            var mock = new Mock<IUsersStore>();
+            var users = Fake.Users.Generate(2);
 
-            cts.CancelAfter(5);
+            mock.Setup(store => store.GetAllUsersAsync(cts.Token))
+                .Returns(async (CancellationToken ct) =>
+                {
+                    await Task.Delay(60000, ct);
+                    ct.ThrowIfCancellationRequested();
 
-            loader.Dispatch(cts.Token);
+                    return users;
+                });
 
-            bool wasCancelled;
+            var usersStore = mock.Object;
 
-            try
-            {
-                var users = await task;
-                wasCancelled = false;
-            }
-            catch (TaskCanceledException)
-            {
-                wasCancelled = true;
-            }
+            var loader = new SimpleDataLoader<IEnumerable<User>>(usersStore.GetAllUsersAsync);
 
-            wasCancelled.ShouldBe(true);
-            Users.GetAllUsersCalledCount.ShouldBe(1);
+            var result = loader.LoadAsync();
+
+            cts.CancelAfter(TimeSpan.FromMilliseconds(5));
+
+            var task = result.GetResultAsync(cts.Token);
+
+            await Should.ThrowAsync<TaskCanceledException>(task);
+
+            mock.Verify(x => x.GetAllUsersAsync(cts.Token), Times.Once);
         }
 
         [Fact]
         public async Task Operation_Cancelled_Before_Dispatch_Does_Not_Execute()
         {
             var cts = new CancellationTokenSource();
-            var loader = new SimpleDataLoader<IEnumerable<User>>((ct) => Users.GetAllUsersAsync(ct));
+            var mock = new Mock<IUsersStore>();
+            var users = Fake.Users.Generate(2);
 
-            var task = loader.LoadAsync();
+            mock.Setup(store => store.GetAllUsersAsync(cts.Token))
+                .ReturnsAsync(users, delay: TimeSpan.FromMilliseconds(20));
+
+            var usersStore = mock.Object;
+
+            var loader = new SimpleDataLoader<IEnumerable<User>>(usersStore.GetAllUsersAsync);
+
+            var result = loader.LoadAsync();
 
             cts.Cancel();
 
-            loader.Dispatch(cts.Token);
+            await Should.ThrowAsync<OperationCanceledException>(() => result.GetResultAsync(cts.Token));
 
-            bool wasCancelled;
-
-            try
-            {
-                var users = await task;
-                wasCancelled = false;
-            }
-            catch (TaskCanceledException)
-            {
-                wasCancelled = true;
-            }
-
-            wasCancelled.ShouldBe(true);
-            Users.GetAllUsersCalledCount.ShouldBe(0, "Fetch delegate should not be called");
+            // Fetch delegate should not be called
+            mock.VerifyNoOtherCalls();
         }
 
         [Fact]
         public async Task Deferred_Exception_Is_Bubbled_Properly()
         {
-            var loader = new SimpleDataLoader<IEnumerable<User>>(Users.ThrowExceptionDeferredAsync);
+            var mock = new Mock<IUsersStore>();
 
-            var task = loader.LoadAsync();
+            mock.Setup(store => store.GetAllUsersAsync(default))
+                .Returns(async () =>
+                {
+                    await Task.Yield();
+                    throw new Exception("Deferred");
+                });
 
-            loader.Dispatch();
+            var usersStore = mock.Object;
 
-            try
-            {
-                await task;
-            }
-            catch (Exception ex) when (ex.Message == "Deferred")
-            {
-                // This is what should happen
-            }
+            var loader = new SimpleDataLoader<IEnumerable<User>>(usersStore.GetAllUsersAsync);
+
+            var result = loader.LoadAsync();
+
+            var task = result.GetResultAsync();
+
+            var ex = await Should.ThrowAsync<Exception>(task);
+
+            ex.Message.ShouldBe("Deferred");
         }
 
         [Fact]
         public async Task Immediate_Exception_Is_Bubbled_Properly()
         {
-            var loader = new SimpleDataLoader<IEnumerable<User>>(Users.ThrowExceptionImmediatelyAsync);
+            var mock = new Mock<IUsersStore>();
 
-            var task = loader.LoadAsync();
+            mock.Setup(store => store.GetAllUsersAsync(default))
+                .Returns(() => throw new Exception("Immediate"));
 
-            loader.Dispatch();
+            var usersStore = mock.Object;
 
-            try
-            {
-                await task;
-            }
-            catch (Exception ex) when (ex.Message == "Immediate")
-            {
-                // This is what should happen
-            }
+            var loader = new SimpleDataLoader<IEnumerable<User>>(usersStore.GetAllUsersAsync);
+
+            var result = loader.LoadAsync();
+
+            var ex = await Should.ThrowAsync<Exception>(() => result.GetResultAsync());
+
+            ex.Message.ShouldBe("Immediate");
+        }
+
+        [Fact]
+        public void GetGraphTypeFromType_Works_With_IDataLoaderResult()
+        {
+            var type = typeof(IDataLoaderResult<int>);
+            var result = type.GetGraphTypeFromType(false);
+            result.ShouldBe(typeof(NonNullGraphType<IntGraphType>));
         }
     }
 }

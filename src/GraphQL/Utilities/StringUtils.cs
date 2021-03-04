@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -7,16 +7,14 @@ namespace GraphQL.Utilities
 {
     public static class StringUtils
     {
-        private static Regex reWords = new Regex(@"[A-Z\xc0-\xd6\xd8-\xde]?[a-z\xdf-\xf6\xf8-\xff]+(?:['’](?:d|ll|m|re|s|t|ve))?(?=[\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000]|[A-Z\xc0-\xd6\xd8-\xde]|$)|(?:[A-Z\xc0-\xd6\xd8-\xde]|[^\ud800-\udfff\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\d+\u2700-\u27bfa-z\xdf-\xf6\xf8-\xffA-Z\xc0-\xd6\xd8-\xde])+(?:['’](?:D|LL|M|RE|S|T|VE))?(?=[\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000]|[A-Z\xc0-\xd6\xd8-\xde](?:[a-z\xdf-\xf6\xf8-\xff]|[^\ud800-\udfff\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\d+\u2700-\u27bfa-z\xdf-\xf6\xf8-\xffA-Z\xc0-\xd6\xd8-\xde])|$)|[A-Z\xc0-\xd6\xd8-\xde]?(?:[a-z\xdf-\xf6\xf8-\xff]|[^\ud800-\udfff\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\d+\u2700-\u27bfa-z\xdf-\xf6\xf8-\xffA-Z\xc0-\xd6\xd8-\xde])+(?:['’](?:d|ll|m|re|s|t|ve))?|[A-Z\xc0-\xd6\xd8-\xde]+(?:['’](?:D|LL|M|RE|S|T|VE))?|\d+|(?:[\u2700-\u27bf]|(?:\ud83c[\udde6-\uddff]){2}|[\ud800-\udbff][\udc00-\udfff])[\ufe0e\ufe0f]?(?:[\u0300-\u036f\ufe20-\ufe23\u20d0-\u20f0]|\ud83c[\udffb-\udfff])?(?:\u200d(?:[^\ud800-\udfff]|(?:\ud83c[\udde6-\uddff]){2}|[\ud800-\udbff][\udc00-\udfff])[\ufe0e\ufe0f]?(?:[\u0300-\u036f\ufe20-\ufe23\u20d0-\u20f0]|\ud83c[\udffb-\udfff])?)*");
+        private static readonly Regex _words = new Regex(@"[A-Z\xc0-\xd6\xd8-\xde]?[a-z\xdf-\xf6\xf8-\xff]+(?:['’](?:d|ll|m|re|s|t|ve))?(?=[\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000]|[A-Z\xc0-\xd6\xd8-\xde]|$)|(?:[A-Z\xc0-\xd6\xd8-\xde]|[^\ud800-\udfff\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\d+\u2700-\u27bfa-z\xdf-\xf6\xf8-\xffA-Z\xc0-\xd6\xd8-\xde])+(?:['’](?:D|LL|M|RE|S|T|VE))?(?=[\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000]|[A-Z\xc0-\xd6\xd8-\xde](?:[a-z\xdf-\xf6\xf8-\xff]|[^\ud800-\udfff\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\d+\u2700-\u27bfa-z\xdf-\xf6\xf8-\xffA-Z\xc0-\xd6\xd8-\xde])|$)|[A-Z\xc0-\xd6\xd8-\xde]?(?:[a-z\xdf-\xf6\xf8-\xff]|[^\ud800-\udfff\xac\xb1\xd7\xf7\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\u2000-\u206f \t\x0b\f\xa0\ufeff\n\r\u2028\u2029\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\d+\u2700-\u27bfa-z\xdf-\xf6\xf8-\xffA-Z\xc0-\xd6\xd8-\xde])+(?:['’](?:d|ll|m|re|s|t|ve))?|[A-Z\xc0-\xd6\xd8-\xde]+(?:['’](?:D|LL|M|RE|S|T|VE))?|\d+|(?:[\u2700-\u27bf]|(?:\ud83c[\udde6-\uddff]){2}|[\ud800-\udbff][\udc00-\udfff])[\ufe0e\ufe0f]?(?:[\u0300-\u036f\ufe20-\ufe23\u20d0-\u20f0]|\ud83c[\udffb-\udfff])?(?:\u200d(?:[^\ud800-\udfff]|(?:\ud83c[\udde6-\uddff]){2}|[\ud800-\udbff][\udc00-\udfff])[\ufe0e\ufe0f]?(?:[\u0300-\u036f\ufe20-\ufe23\u20d0-\u20f0]|\ud83c[\udffb-\udfff])?)*");
 
         /// <summary>
-        /// Split a cased string into a series of "words" excluding the seperator if applicable.
+        /// Split a cased string into a series of "words" excluding the separator if applicable.
         /// </summary>
-        /// <param name="str"></param>
-        /// <returns></returns>
         public static IEnumerable<string> ToWords(string str)
         {
-            foreach (Match match in reWords.Matches(str))
+            foreach (Match match in _words.Matches(str))
             {
                 yield return match.Value;
             }
@@ -24,14 +22,21 @@ namespace GraphQL.Utilities
 
         public static string Capitalize(string str)
         {
-            str = str.ToLowerInvariant();
-            return str.Substring(0, 1).ToUpperInvariant() + str.Substring(1);
+            switch (str.Length)
+            {
+                case 0:
+                    return str;
+                case 1:
+                    return str.ToUpperInvariant();
+                default:
+                    str = str.ToLowerInvariant();
+                    return char.ToUpperInvariant(str[0]) + str.Substring(1);
+            }
         }
 
         public static string ToCamelCase(string str)
         {
-            return ChangeCase(str, "", (word, index) =>
-                (index == 0 ? word.ToLowerInvariant() : Capitalize(word)));
+            return ChangeCase(str, "", (word, index) => index == 0 ? word.ToLowerInvariant() : Capitalize(word));
         }
 
         public static string ToConstantCase(string str)
@@ -43,7 +48,6 @@ namespace GraphQL.Utilities
         {
             return ChangeCase(str, "", Capitalize);
         }
-
 
         public static string ChangeCase(string str, string sep, Func<string, string> composer)
         {
@@ -57,20 +61,19 @@ namespace GraphQL.Utilities
 
             foreach (string word in ToWords(str))
             {
-                result += ((index == 0 ? "" : sep) + composer(word, index++));
+                result += (index == 0 ? "" : sep) + composer(word, index++);
             }
 
             return result;
         }
-
 
         /// <summary>
         /// Given [ A, B, C ] return '"A", "B", or "C"'.
         /// </summary>
         public static string QuotedOrList(IEnumerable<string> items, int maxLength = 5)
         {
-            var itemsArray = items.Take(maxLength).ToArray();
-            var index = 0;
+            string[] itemsArray = items.Take(maxLength).ToArray();
+            int index = 0;
             return itemsArray
                 .Select(x => $"\"{x}\"")
                 .Aggregate((list, quoted) =>
@@ -88,7 +91,7 @@ namespace GraphQL.Utilities
         {
             if (options == null)
             {
-                return new string[0];
+                return Array.Empty<string>();
             }
 
             var optionsByDistance = new Dictionary<string, int>();
@@ -116,20 +119,21 @@ namespace GraphQL.Utilities
         /// <summary>
         /// Computes the Damerau-Levenshtein Distance between two strings, represented as arrays of
         /// integers, where each integer represents the code point of a character in the source string.
-        /// Includes an optional threshhold which can be used to indicate the maximum allowable distance.
+        /// Includes an optional threshold which can be used to indicate the maximum allowable distance.
         /// http://stackoverflow.com/a/9454016/279764
         /// </summary>
         /// <param name="source">An array of the code points of the first string</param>
         /// <param name="target">An array of the code points of the second string</param>
         /// <param name="threshold">Maximum allowable distance</param>
-        /// <returns>Int.MaxValue if threshhold exceeded; otherwise the Damerau-Leveshteim distance between the strings</returns>
+        /// <returns>Int.MaxValue if threshold exceeded; otherwise the Damerau-Levenshtein distance between the strings</returns>
         public static int DamerauLevenshteinDistance(string source, string target, int threshold)
         {
             int length1 = source.Length;
             int length2 = target.Length;
 
-            // Return trivial case - difference in string lengths exceeds threshhold
-            if (Math.Abs(length1 - length2) > threshold) { return int.MaxValue; }
+            // Return trivial case - difference in string lengths exceeds threshold
+            if (Math.Abs(length1 - length2) > threshold)
+                return int.MaxValue;
 
             // Ensure arrays [i] / length1 use shorter length
             if (length1 > length2)
@@ -146,7 +150,8 @@ namespace GraphQL.Utilities
             int[] dMinus2 = new int[maxi + 1];
             int[] dSwap;
 
-            for (int i = 0; i <= maxi; i++) { dCurrent[i] = i; }
+            for (int i = 0; i <= maxi; i++)
+                dCurrent[i] = i;
 
             int jm1 = 0, im1 = 0, im2 = -1;
 
@@ -180,16 +185,18 @@ namespace GraphQL.Utilities
                         min = Math.Min(min, dMinus2[im2] + cost);
 
                     dCurrent[i] = min;
-                    if (min < minDistance) { minDistance = min; }
+                    if (min < minDistance)
+                        minDistance = min;
                     im1++;
                     im2++;
                 }
                 jm1++;
-                if (minDistance > threshold) { return int.MaxValue; }
+                if (minDistance > threshold)
+                    return int.MaxValue;
             }
 
             int result = dCurrent[maxi];
-            return (result > threshold) ? int.MaxValue : result;
+            return result > threshold ? int.MaxValue : result;
         }
     }
 }

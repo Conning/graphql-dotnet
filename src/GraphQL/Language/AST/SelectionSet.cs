@@ -1,36 +1,71 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
 namespace GraphQL.Language.AST
 {
+    /// <summary>
+    /// Represents a list of field nodes or fragment nodes selected to be returned.
+    /// </summary>
     public class SelectionSet : AbstractNode
     {
-        private readonly List<ISelection> _selections = new List<ISelection>();
+        /// <summary>
+        /// Initializes a new instance with an empty list.
+        /// </summary>
+        public SelectionSet()
+        {
+            SelectionsList = new List<ISelection>();
+        }
 
-        public IEnumerable<ISelection> Selections => _selections;
-        public override IEnumerable<INode> Children => _selections;
+        private SelectionSet(List<ISelection> selections)
+        {
+            SelectionsList = selections;
+        }
 
+        //TODO: change to List<> ?
+        /// <summary>
+        /// Returns the list of selected nodes.
+        /// </summary>
+        public IList<ISelection> Selections => SelectionsList;
+
+        // avoids List+Enumerator<ISelection> boxing on hot path
+        internal List<ISelection> SelectionsList { get; }
+
+        /// <inheritdoc/>
+        public override IEnumerable<INode> Children => SelectionsList;
+
+        /// <summary>
+        /// Adds a node to the start of the list.
+        /// </summary>
+        public void Prepend(ISelection selection)
+        {
+            SelectionsList.Insert(0, selection ?? throw new ArgumentNullException(nameof(selection)));
+        }
+
+        /// <summary>
+        /// Adds a node to the end of the list.
+        /// </summary>
         public void Add(ISelection selection)
         {
-            _selections.Add(selection);
+            SelectionsList.Add(selection ?? throw new ArgumentNullException(nameof(selection)));
         }
 
-        protected bool Equals(SelectionSet selectionSet)
+        /// <summary>
+        /// Returns a new selection set node with the contents merged with another selection set node's contents.
+        /// </summary>
+        public SelectionSet Merge(SelectionSet otherSelection)
         {
-            return false;
+            var newSelection = SelectionsList.Union(otherSelection.SelectionsList).ToList();
+            return new SelectionSet(newSelection);
         }
 
-        public override bool IsEqualTo(INode obj)
-        {
-            if (ReferenceEquals(null, obj)) return false;
-            if (ReferenceEquals(this, obj)) return true;
-            if (obj.GetType() != this.GetType()) return false;
-            return Equals((SelectionSet) obj);
-        }
+        /// <inheritdoc/>
+        public override bool IsEqualTo(INode obj) => ReferenceEquals(this, obj);
 
+        /// <inheritdoc/>
         public override string ToString()
         {
-            var sel = string.Join(", ", _selections.Select(s => s.ToString()));
+            string sel = string.Join(", ", SelectionsList.Select(s => s.ToString()));
             return $"SelectionSet{{selections={sel}}}";
         }
     }

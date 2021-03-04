@@ -1,11 +1,13 @@
 using System.Collections.Generic;
 using System.Linq;
-using GraphQL.Introspection;
 using GraphQL.Language.AST;
 using GraphQL.Types;
 
 namespace GraphQL.Validation
 {
+    /// <summary>
+    /// Provides information pertaining to the current state of the AST tree while being walked.
+    /// </summary>
     public class TypeInfo : INodeVisitor
     {
         private readonly ISchema _schema;
@@ -17,46 +19,75 @@ namespace GraphQL.Validation
         private DirectiveGraphType _directive;
         private QueryArgument _argument;
 
+        /// <summary>
+        /// Initializes a new instance for the specified schema.
+        /// </summary>
+        /// <param name="schema"></param>
         public TypeInfo(ISchema schema)
         {
             _schema = schema;
         }
 
+        /// <summary>
+        /// Returns a list of ancestors of the current node.
+        /// </summary>
+        /// <returns></returns>
         public INode[] GetAncestors()
         {
-            return _ancestorStack.Select(x => x).Skip(1).Reverse().ToArray();
+            return _ancestorStack.Skip(1).Reverse().ToArray();
         }
 
+        /// <summary>
+        /// Returns the last graph type matched, or null if none.
+        /// </summary>
         public IGraphType GetLastType()
         {
-            return _typeStack.Any() ? _typeStack.Peek() : null;
+            return _typeStack.Count > 0 ? _typeStack.Peek() : null;
         }
 
+        /// <summary>
+        /// Returns the last input graph type matched, or null if none.
+        /// </summary>
         public IGraphType GetInputType()
         {
-            return _inputTypeStack.Any() ? _inputTypeStack.Peek() : null;
+            return _inputTypeStack.Count > 0 ? _inputTypeStack.Peek() : null;
         }
 
+        /// <summary>
+        /// Returns the parent graph type of the current node, or null if none.
+        /// </summary>
         public IGraphType GetParentType()
         {
-            return _parentTypeStack.Any() ? _parentTypeStack.Peek() : null;
+            return _parentTypeStack.Count > 0 ? _parentTypeStack.Peek() : null;
         }
 
+        /// <summary>
+        /// Returns the last field type matched, or null if none.
+        /// </summary>
         public FieldType GetFieldDef()
         {
-            return _fieldDefStack.Any() ? _fieldDefStack.Peek() : null;
+            return _fieldDefStack.Count > 0 ? _fieldDefStack.Peek() : null;
         }
 
+        /// <summary>
+        /// Returns the last directive specified, or null if none.
+        /// </summary>
+        /// <returns></returns>
         public DirectiveGraphType GetDirective()
         {
             return _directive;
         }
 
+        /// <summary>
+        /// Returns the last query argument matched, or null if none.
+        /// </summary>
+        /// <returns></returns>
         public QueryArgument GetArgument()
         {
             return _argument;
         }
 
+        /// <inheritdoc/>
         public void Enter(INode node)
         {
             _ancestorStack.Push(node);
@@ -67,9 +98,8 @@ namespace GraphQL.Validation
                 return;
             }
 
-            if (node is Field)
+            if (node is Field field)
             {
-                var field = (Field) node;
                 var parentType = _parentTypeStack.Peek().GetNamedType();
                 var fieldType = GetFieldDef(_schema, parentType, field);
                 _fieldDefStack.Push(fieldType);
@@ -78,15 +108,13 @@ namespace GraphQL.Validation
                 return;
             }
 
-            if (node is Directive)
+            if (node is Directive directive)
             {
-                var directive = (Directive) node;
                 _directive = _schema.FindDirective(directive.Name);
             }
 
-            if (node is Operation)
+            if (node is Operation op)
             {
-                var op = (Operation) node;
                 IGraphType type = null;
                 if (op.OperationType == OperationType.Query)
                 {
@@ -104,33 +132,29 @@ namespace GraphQL.Validation
                 return;
             }
 
-            if (node is FragmentDefinition)
+            if (node is FragmentDefinition def1)
             {
-                var def = (FragmentDefinition) node;
-                var type = _schema.FindType(def.Type.Name);
+                var type = _schema.FindType(def1.Type.Name);
                 _typeStack.Push(type);
                 return;
             }
 
-            if (node is InlineFragment)
+            if (node is InlineFragment def)
             {
-                var def = (InlineFragment) node;
                 var type = def.Type != null ? _schema.FindType(def.Type.Name) : GetLastType();
                 _typeStack.Push(type);
                 return;
             }
 
-            if (node is VariableDefinition)
+            if (node is VariableDefinition varDef)
             {
-                var varDef = (VariableDefinition) node;
                 var inputType = varDef.Type.GraphTypeFromType(_schema);
                 _inputTypeStack.Push(inputType);
                 return;
             }
 
-            if (node is Argument)
+            if (node is Argument argAst)
             {
-                var argAst = (Argument) node;
                 QueryArgument argDef = null;
                 IGraphType argType = null;
 
@@ -152,15 +176,15 @@ namespace GraphQL.Validation
                 _inputTypeStack.Push(type);
             }
 
-            if (node is ObjectField)
+            if (node is ObjectField objectField)
             {
                 var objectType = GetInputType().GetNamedType();
                 IGraphType fieldType = null;
 
-                if (objectType is IInputObjectGraphType)
+                if (objectType is IInputObjectGraphType complexType)
                 {
-                    var complexType = objectType as IComplexGraphType;
-                    var inputField = complexType.Fields.FirstOrDefault(x => x.Name == ((ObjectField) node).Name);
+                    var inputField = complexType.GetField(objectField.Name);
+
                     fieldType = inputField?.ResolvedType;
                 }
 
@@ -168,6 +192,7 @@ namespace GraphQL.Validation
             }
         }
 
+        /// <inheritdoc/>
         public void Leave(INode node)
         {
             _ancestorStack.Pop();
@@ -223,27 +248,28 @@ namespace GraphQL.Validation
         {
             var name = field.Name;
 
-            if (name == SchemaIntrospection.SchemaMeta.Name
+            if (name == schema.SchemaMetaFieldType.Name
                 && Equals(schema.Query, parentType))
             {
-                return SchemaIntrospection.SchemaMeta;
+                return schema.SchemaMetaFieldType;
             }
 
-            if (name == SchemaIntrospection.TypeMeta.Name
+            if (name == schema.TypeMetaFieldType.Name
                 && Equals(schema.Query, parentType))
             {
-                return SchemaIntrospection.TypeMeta;
+                return schema.TypeMetaFieldType;
             }
 
-            if (name == SchemaIntrospection.TypeNameMeta.Name && parentType.IsCompositeType())
+            if (name == schema.TypeNameMetaFieldType.Name && parentType.IsCompositeType())
             {
-                return SchemaIntrospection.TypeNameMeta;
+                return schema.TypeNameMetaFieldType;
             }
 
             if (parentType is IObjectGraphType || parentType is IInterfaceGraphType)
             {
-                var complexType = parentType as IComplexGraphType;
-                return complexType.Fields.FirstOrDefault(x => x.Name == field.Name);
+                var complexType = (IComplexGraphType)parentType;
+
+                return complexType.GetField(field.Name);
             }
 
             return null;

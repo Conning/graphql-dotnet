@@ -1,4 +1,5 @@
-﻿using System.Linq;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using GraphQL.Instrumentation;
 using GraphQL.Language.AST;
@@ -17,16 +18,15 @@ namespace GraphQL.Tests.Instrumentation
         public FieldMiddlewareBuilderTests()
         {
             _builder = new FieldMiddlewareBuilder();
-            _context = new ResolveFieldContext();
-            _context.FieldName = "Name";
-            _context.FieldAst = new Field(null, new NameNode("Name"));
-            _context.Source = new Person
+            _context = new ResolveFieldContext
             {
-                Name = "Quinn"
+                FieldName = "Name",
+                FieldAst = new Field(null, new NameNode("Name")),
+                Source = new Person { Name = "Quinn" },
+                Errors = new ExecutionErrors(),
+                Schema = new Schema(),
+                Metrics = new Metrics().Start(null)
             };
-            _context.Errors = new ExecutionErrors();
-
-            _context.Metrics = new Metrics();
         }
 
         [Fact]
@@ -38,10 +38,7 @@ namespace GraphQL.Tests.Instrumentation
         [Fact]
         public void middleware_can_override()
         {
-            _builder.Use(next =>
-            {
-                return context => Task.FromResult<object>("One");
-            });
+            _builder.Use(next => context => Task.FromResult<object>("One"));
 
             _builder.Build().Invoke(_context).Result.ShouldBe("One");
         }
@@ -79,7 +76,7 @@ namespace GraphQL.Tests.Instrumentation
             var result = _builder.Build().Invoke(_context).Result;
             result.ShouldBe("Quinn");
 
-            var record = _context.Metrics.AllRecords.Single();
+            var record = _context.Metrics.Finish().Skip(1).Single();
             record.Category.ShouldBe("test");
             record.Subject.ShouldBe("testing name");
         }
@@ -89,10 +86,10 @@ namespace GraphQL.Tests.Instrumentation
         {
             _builder.Use<SimpleMiddleware>();
 
-            var result = _builder.Build().Invoke(_context).Result;
+            var result = _builder.Build(start: null, schema: _context.Schema).Invoke(_context).Result;
             result.ShouldBe("Quinn");
 
-            var record = _context.Metrics.AllRecords.Single();
+            var record = _context.Metrics.Finish().Skip(1).Single();
             record.Category.ShouldBe("class");
             record.Subject.ShouldBe("from class");
         }
@@ -114,14 +111,44 @@ namespace GraphQL.Tests.Instrumentation
             _context.Errors.ShouldContain(x => x.Message == "Custom error");
         }
 
+        [Fact]
+        public void can_report_errors_with_data()
+        {
+            var additionalData = new Dictionary<string, string[]>
+            {
+                ["errorCodes"] = new[] { "one", "two" },
+                ["otherErrorCodes"] = new[] { "one", "four" }
+            };
+            _builder.Use(next =>
+            {
+                return context =>
+                {
+                    context.Errors.Add(new ExecutionError("Custom error", additionalData));
+                    return Task.FromResult((object)null);
+                };
+            });
+
+            var result = _builder.Build().Invoke(_context).Result;
+
+            result.ShouldBeNull();
+            _context.Errors.ShouldContain(x => x.Message == "Custom error");
+            AssertData(_context.Errors.Single(), additionalData);
+        }
+
+        private static void AssertData(ExecutionError errors, Dictionary<string, string[]> additionalData)
+        {
+            foreach (var ad in additionalData)
+                errors.Data[ad.Key].ShouldBe(ad.Value);
+        }
+
         public class Person
         {
             public string Name { get; set; }
         }
 
-        public class SimpleMiddleware
+        public class SimpleMiddleware : IFieldMiddleware
         {
-            public Task<object> Resolve(ResolveFieldContext context, FieldMiddlewareDelegate next)
+            public Task<object> Resolve(IResolveFieldContext context, FieldMiddlewareDelegate next)
             {
                 using (context.Metrics.Subject("class", "from class"))
                 {
@@ -129,5 +156,10 @@ namespace GraphQL.Tests.Instrumentation
                 }
             }
         }
+    }
+
+    internal static class TestExtensions
+    {
+        public static FieldMiddlewareDelegate Build(this FieldMiddlewareBuilder builder) => builder.Build(null, null);
     }
 }

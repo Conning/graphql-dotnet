@@ -1,19 +1,47 @@
-using System.Linq;
+using System.Collections.Generic;
 
 namespace GraphQL.Validation
 {
+    /// <inheritdoc cref="IValidationResult"/>
     public class ValidationResult : IValidationResult
     {
-        public ValidationResult()
+        /// <summary>
+        /// Initializes a new instance with the specified set of validation errors.
+        /// </summary>
+        /// <param name="errors"></param>
+        public ValidationResult(IEnumerable<ValidationError> errors)
         {
-            Errors = new ExecutionErrors();
+            Errors.AddRange(errors);
         }
 
-        public bool IsValid
-        {
-            get { return !Errors.Any(); }
-        }
+        /// <inheritdoc/>
+        public bool IsValid => Errors.Count == 0;
 
-        public ExecutionErrors Errors { get; set; }
+        /// <inheritdoc/>
+        public ExecutionErrors Errors { get; } = new ExecutionErrors();
+    }
+
+    // Optimization for validation "green path" - does not allocate memory in managed heap.
+    /// <summary>
+    /// A validation result that indicates no errors were found during validation of the document.
+    /// </summary>
+    public sealed class SuccessfullyValidatedResult : IValidationResult
+    {
+        private SuccessfullyValidatedResult() { }
+
+        /// <summary>
+        /// Returns a static instance of this class.
+        /// </summary>
+        public static readonly SuccessfullyValidatedResult Instance = new SuccessfullyValidatedResult();
+
+        /// <summary>
+        /// Returns <see langword="true"/> indicating that the document was successfully validated.
+        /// </summary>
+        public bool IsValid => true;
+
+        /// <summary>
+        /// Returns an empty list of execution errors.
+        /// </summary>
+        public ExecutionErrors Errors => EmptyExecutionErrors.Instance;
     }
 }
